@@ -174,6 +174,18 @@ export const Header: React.FC<HeaderProps> = ({
             <span className="hidden sm:inline">Reports</span>
           </button>
 
+          {/* Supabase Cloud Quick Access Button */}
+          {onOpenCloudSync && (
+            <button
+              onClick={onOpenCloudSync}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-950/60 hover:bg-emerald-900/60 text-emerald-300 text-xs font-medium border border-emerald-700/50 transition-colors shadow-sm"
+              title="Open Supabase Cloud Database Integration & SQL Migration"
+            >
+              <Database className="w-3.5 h-3.5 text-emerald-400" />
+              <span className="hidden sm:inline">Supabase Cloud</span>
+            </button>
+          )}
+
           {/* Settings Trigger */}
           {onOpenSettings && (
             <button
