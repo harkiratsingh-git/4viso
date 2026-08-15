@@ -1,0 +1,464 @@
+import React, { useState } from 'react';
+import { 
+  Flame, 
+  Thermometer, 
+  Sun, 
+  Droplets, 
+  Wind, 
+  AlertTriangle, 
+  ShieldAlert, 
+  Layers, 
+  Eye, 
+  Sliders, 
+  Info,
+  MapPin,
+  CheckCircle2,
+  ArrowRight,
+  Sparkles,
+  Snowflake,
+  ExternalLink
+} from 'lucide-react';
+import { TransportLane, RegionalThermalHotspot, HeatmapConfig } from '../types';
+import { REGIONAL_THERMAL_HOTSPOTS, getThermalRiskColor } from '../data/temperatureRiskData';
+
+interface RegionalTemperatureHeatmapViewProps {
+  lanes: TransportLane[];
+  selectedLaneId: string | null;
+  onSelectLane: (lane: TransportLane) => void;
+}
+
+// Convert Lat/Lng to SVG coordinates
+function projectCoordinates(lat: number, lng: number): [number, number] {
+  const x = ((lng + 180) / 360) * 920 + 40;
+  const y = ((80 - lat) / 140) * 420 + 40;
+  return [Math.max(20, Math.min(980, x)), Math.max(20, Math.min(480, y))];
+}
+
+export const RegionalTemperatureHeatmapView: React.FC<RegionalTemperatureHeatmapViewProps> = ({
+  lanes,
+  selectedLaneId,
+  onSelectLane,
+}) => {
+  const [selectedHotspot, setSelectedHotspot] = useState<RegionalThermalHotspot | null>(
+    REGIONAL_THERMAL_HOTSPOTS[0]
+  );
+  const [filterLevel, setFilterLevel] = useState<'ALL' | 'EXTREME' | 'HIGH' | 'FREEZE'>('ALL');
+  const [opacity, setOpacity] = useState<number>(0.85);
+  const [showContours, setShowContours] = useState<boolean>(true);
+  const [showLaneCorridors, setShowLaneCorridors] = useState<boolean>(true);
+
+  const filteredHotspots = REGIONAL_THERMAL_HOTSPOTS.filter(h => {
+    if (filterLevel === 'EXTREME') return h.thermalRiskLevel === 'Extreme Heat';
+    if (filterLevel === 'HIGH') return h.thermalRiskLevel === 'High Heat' || h.thermalRiskLevel === 'Extreme Heat';
+    if (filterLevel === 'FREEZE') return h.thermalRiskLevel === 'Sub-Zero Freeze';
+    return true;
+  });
+
+  return (
+    <div className="space-y-4">
+      {/* Control & Filter Strip */}
+      <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-950/80 p-3 rounded-lg border border-slate-800 text-xs">
+        <div className="flex items-center gap-2">
+          <span className="text-slate-400 font-medium">Thermal Hazard Filter:</span>
+          <div className="flex items-center gap-1 bg-slate-900 p-0.5 rounded border border-slate-800">
+            <button
+              onClick={() => setFilterLevel('ALL')}
+              className={`px-2.5 py-1 rounded font-medium transition-all ${
+                filterLevel === 'ALL' ? 'bg-slate-700 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              All Zones ({REGIONAL_THERMAL_HOTSPOTS.length})
+            </button>
+            <button
+              onClick={() => setFilterLevel('EXTREME')}
+              className={`px-2.5 py-1 rounded font-medium transition-all ${
+                filterLevel === 'EXTREME' ? 'bg-rose-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              Extreme Heat (&gt;40°C)
+            </button>
+            <button
+              onClick={() => setFilterLevel('HIGH')}
+              className={`px-2.5 py-1 rounded font-medium transition-all ${
+                filterLevel === 'HIGH' ? 'bg-orange-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              High Heat (&gt;30°C)
+            </button>
+            <button
+              onClick={() => setFilterLevel('FREEZE')}
+              className={`px-2.5 py-1 rounded font-medium transition-all ${
+                filterLevel === 'FREEZE' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              Polar Freeze (&lt;0°C)
+            </button>
+          </div>
+        </div>
+
+        {/* View Options */}
+        <div className="flex items-center gap-4 text-slate-300">
+          <label className="flex items-center gap-1.5 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={showContours}
+              onChange={(e) => setShowContours(e.target.checked)}
+              className="rounded bg-slate-900 border-slate-700 text-teal-500 focus:ring-0"
+            />
+            <span className="text-slate-400">Thermal Isochrones</span>
+          </label>
+
+          <label className="flex items-center gap-1.5 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={showLaneCorridors}
+              onChange={(e) => setShowLaneCorridors(e.target.checked)}
+              className="rounded bg-slate-900 border-slate-700 text-teal-500 focus:ring-0"
+            />
+            <span className="text-slate-400">Lane Trajectories</span>
+          </label>
+
+          <div className="flex items-center gap-2 pl-2 border-l border-slate-800">
+            <span className="text-slate-400">Heat Density:</span>
+            <input
+              type="range"
+              min="0.3"
+              max="1.0"
+              step="0.05"
+              value={opacity}
+              onChange={(e) => setOpacity(parseFloat(e.target.value))}
+              className="w-20 accent-teal-500 h-1.5 bg-slate-800 rounded-lg cursor-pointer"
+            />
+            <span className="font-mono text-[11px] text-slate-400">{Math.round(opacity * 100)}%</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Primary Interactive Heatmap Display */}
+      <div className="relative w-full aspect-[2/1] min-h-[340px] max-h-[480px] bg-slate-950 rounded-xl border border-slate-800 overflow-hidden">
+        
+        <svg viewBox="0 0 1000 500" className="w-full h-full select-none">
+          <defs>
+            {/* Background Grid */}
+            <pattern id="heatmap-grid" width="40" height="40" patternUnits="userSpaceOnUse">
+              <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" strokeWidth="0.5" strokeOpacity="0.3" />
+            </pattern>
+
+            {/* Radial Thermal Gradients for each hotspot */}
+            {REGIONAL_THERMAL_HOTSPOTS.map((h) => {
+              const isFreeze = h.thermalRiskLevel === 'Sub-Zero Freeze';
+              const isExtreme = h.thermalRiskLevel === 'Extreme Heat';
+              const isHigh = h.thermalRiskLevel === 'High Heat';
+
+              const centerColor = isExtreme ? '#ef4444' : isHigh ? '#f97316' : isFreeze ? '#6366f1' : '#eab308';
+              const midColor = isExtreme ? '#f87171' : isHigh ? '#fb923c' : isFreeze ? '#818cf8' : '#facc15';
+
+              return (
+                <radialGradient
+                  key={`grad-${h.id}`}
+                  id={`heat-grad-${h.id}`}
+                  cx="50%"
+                  cy="50%"
+                  r="50%"
+                  fx="50%"
+                  fy="50%"
+                >
+                  <stop offset="0%" stopColor={centerColor} stopOpacity={opacity * 0.9} />
+                  <stop offset="35%" stopColor={midColor} stopOpacity={opacity * 0.65} />
+                  <stop offset="70%" stopColor={midColor} stopOpacity={opacity * 0.25} />
+                  <stop offset="100%" stopColor={centerColor} stopOpacity="0" />
+                </radialGradient>
+              );
+            })}
+
+            {/* Gaussian Blur Filter for natural Heatmap Diffusion */}
+            <filter id="thermal-diffusion" x="-50%" y="-50%" width="200%" height="200%">
+              <feGaussianBlur stdDeviation="8" result="blur" />
+              <feComposite in="SourceGraphic" in2="blur" operator="over" />
+            </filter>
+          </defs>
+
+          {/* Canvas Background */}
+          <rect width="1000" height="500" fill="#080c14" />
+          <rect width="1000" height="500" fill="url(#heatmap-grid)" />
+
+          {/* Continents Base Map */}
+          <g fill="#101927" stroke="#1c2b3f" strokeWidth="0.75" opacity="0.65">
+            {/* North America */}
+            <path d="M 120 90 Q 200 80 260 110 T 320 160 Q 290 220 220 250 T 170 230 Q 140 180 120 90 Z" />
+            {/* South America */}
+            <path d="M 270 270 Q 340 290 320 380 T 260 460 Q 240 400 250 320 Z" />
+            {/* Europe */}
+            <path d="M 460 100 Q 550 90 560 140 T 490 200 Q 450 180 460 100 Z" />
+            {/* Africa */}
+            <path d="M 470 210 Q 560 210 570 300 T 520 420 Q 460 380 450 280 Z" />
+            {/* Asia */}
+            <path d="M 570 90 Q 750 80 840 140 T 800 280 Q 680 260 620 200 Z" />
+            {/* Australia */}
+            <path d="M 770 340 Q 860 330 870 400 T 780 430 Q 750 380 770 340 Z" />
+          </g>
+
+          {/* Thermal Heat Map Density Blobs (Layer 1) */}
+          <g filter="url(#thermal-diffusion)">
+            {filteredHotspots.map((h) => {
+              const [x, y] = projectCoordinates(h.coords[0], h.coords[1]);
+              const radius = h.thermalRiskLevel === 'Extreme Heat' ? 65 : h.thermalRiskLevel === 'High Heat' ? 52 : 44;
+
+              return (
+                <circle
+                  key={`blob-${h.id}`}
+                  cx={x}
+                  cy={y}
+                  r={radius}
+                  fill={`url(#heat-grad-${h.id})`}
+                />
+              );
+            })}
+          </g>
+
+          {/* Thermal Isochrone Contour Rings (Layer 2) */}
+          {showContours &&
+            filteredHotspots.map((h) => {
+              const [x, y] = projectCoordinates(h.coords[0], h.coords[1]);
+              const isExtreme = h.thermalRiskLevel === 'Extreme Heat';
+              const isFreeze = h.thermalRiskLevel === 'Sub-Zero Freeze';
+              const ringColor = isExtreme ? '#f87171' : isFreeze ? '#818cf8' : '#fb923c';
+
+              return (
+                <g key={`contour-${h.id}`} opacity="0.6">
+                  <circle
+                    cx={x}
+                    cy={y}
+                    r="28"
+                    fill="none"
+                    stroke={ringColor}
+                    strokeWidth="0.8"
+                    strokeDasharray="3,3"
+                  />
+                  <circle
+                    cx={x}
+                    cy={y}
+                    r="48"
+                    fill="none"
+                    stroke={ringColor}
+                    strokeWidth="0.5"
+                    strokeOpacity="0.5"
+                  />
+                </g>
+              );
+            })}
+
+          {/* Active Lane Corridors overlay (Layer 3) */}
+          {showLaneCorridors &&
+            lanes.map((lane) => {
+              const [x1, y1] = projectCoordinates(lane.originCoords[0], lane.originCoords[1]);
+              const [x2, y2] = projectCoordinates(lane.destinationCoords[0], lane.destinationCoords[1]);
+              const midX = (x1 + x2) / 2;
+              const midY = Math.min(y1, y2) - Math.abs(x1 - x2) * 0.18;
+              const pathD = `M ${x1} ${y1} Q ${midX} ${midY} ${x2} ${y2}`;
+
+              const isSelected = selectedLaneId === lane.id;
+
+              return (
+                <g key={`lane-arc-${lane.id}`} onClick={() => onSelectLane(lane)} className="cursor-pointer">
+                  <path
+                    d={pathD}
+                    fill="none"
+                    stroke="#ffffff"
+                    strokeWidth={isSelected ? 2.5 : 1.2}
+                    strokeOpacity={isSelected ? 0.9 : 0.35}
+                    strokeDasharray="4,4"
+                  />
+                </g>
+              );
+            })}
+
+          {/* Thermal Hotspot Markers & Telemetry Pins (Layer 4) */}
+          {filteredHotspots.map((h) => {
+            const [x, y] = projectCoordinates(h.coords[0], h.coords[1]);
+            const isSelected = selectedHotspot?.id === h.id;
+            const isExtreme = h.thermalRiskLevel === 'Extreme Heat';
+            const isFreeze = h.thermalRiskLevel === 'Sub-Zero Freeze';
+
+            const badgeBg = isExtreme ? '#dc2626' : isFreeze ? '#4f46e5' : '#ea580c';
+
+            return (
+              <g
+                key={`pin-${h.id}`}
+                transform={`translate(${x}, ${y})`}
+                onClick={() => setSelectedHotspot(h)}
+                className="cursor-pointer group"
+              >
+                {/* Pulse Ring for Extreme & Freeze */}
+                {(isExtreme || isFreeze) && (
+                  <circle
+                    r={isSelected ? 16 : 12}
+                    fill="none"
+                    stroke={badgeBg}
+                    strokeWidth="1.5"
+                    opacity="0.8"
+                  >
+                    <animate attributeName="r" values="8;20;8" dur="2s" repeatCount="indefinite" />
+                    <animate attributeName="opacity" values="0.8;0;0.8" dur="2s" repeatCount="indefinite" />
+                  </circle>
+                )}
+
+                {/* Hotspot Core Pin */}
+                <circle
+                  r={isSelected ? 8 : 6}
+                  fill={badgeBg}
+                  stroke="#ffffff"
+                  strokeWidth={isSelected ? 2 : 1}
+                  className="transition-transform group-hover:scale-125"
+                />
+
+                {/* Temperature Label */}
+                <rect
+                  x="-18"
+                  y={isSelected ? "-24" : "-20"}
+                  width="36"
+                  height="14"
+                  rx="3"
+                  fill="#090e17"
+                  fillOpacity="0.9"
+                  stroke={badgeBg}
+                  strokeWidth="0.8"
+                />
+                <text
+                  x="0"
+                  y={isSelected ? "-14" : "-10"}
+                  fill="#ffffff"
+                  fontSize="8"
+                  textAnchor="middle"
+                  fontWeight="bold"
+                  fontFamily="JetBrains Mono, monospace"
+                >
+                  {h.ambientTempC > 0 ? `+${h.ambientTempC}` : h.ambientTempC}°
+                </text>
+              </g>
+            );
+          })}
+        </svg>
+
+        {/* Floating Heatmap Scale Legend */}
+        <div className="absolute bottom-3 right-3 bg-slate-900/90 backdrop-blur-md border border-slate-800 rounded-lg p-2.5 text-xs text-slate-300 shadow-xl max-w-xs">
+          <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5 flex items-center justify-between">
+            <span>Thermal Severity Gradient</span>
+            <span className="font-mono text-slate-500">ISO-28590</span>
+          </div>
+
+          {/* Color Gradient Bar */}
+          <div className="h-2 rounded-full w-full bg-gradient-to-r from-indigo-500 via-emerald-500 via-amber-400 via-orange-500 to-rose-600 mb-1.5" />
+
+          <div className="flex items-center justify-between text-[10px] text-slate-400 font-mono">
+            <span>&lt;0°C (Freeze)</span>
+            <span>2°-8°C</span>
+            <span>25°C</span>
+            <span>&gt;45°C (Extreme)</span>
+          </div>
+        </div>
+
+      </div>
+
+      {/* Selected Hotspot Detailed Telemetry & Risk Mitigation Card */}
+      {selectedHotspot && (
+        <div className="bg-slate-900/95 border border-slate-800 rounded-xl p-4 shadow-lg">
+          <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-3 border-b border-slate-800 pb-3 mb-3">
+            <div className="flex items-center gap-3">
+              <div className={`p-2.5 rounded-xl ${
+                selectedHotspot.thermalRiskLevel === 'Extreme Heat'
+                  ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
+                  : selectedHotspot.thermalRiskLevel === 'Sub-Zero Freeze'
+                    ? 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/30'
+                    : 'bg-orange-500/20 text-orange-400 border border-orange-500/30'
+              }`}>
+                {selectedHotspot.thermalRiskLevel === 'Sub-Zero Freeze' ? (
+                  <Snowflake className="w-6 h-6" />
+                ) : (
+                  <Flame className="w-6 h-6" />
+                )}
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-base font-bold text-slate-100">
+                    {selectedHotspot.name}
+                  </h3>
+                  <span className={`text-xs px-2 py-0.5 rounded-full font-bold border ${getThermalRiskColor(selectedHotspot.thermalRiskLevel).badgeBg} ${getThermalRiskColor(selectedHotspot.thermalRiskLevel).badgeText}`}>
+                    {selectedHotspot.thermalRiskLevel}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  {selectedHotspot.region} • Hotspot Risk Score: <strong className="text-rose-400">{selectedHotspot.riskScore}/100</strong>
+                </p>
+              </div>
+            </div>
+
+            {/* Quick Metrics */}
+            <div className="flex items-center gap-2 bg-slate-950 p-1.5 rounded-lg border border-slate-800 text-xs">
+              <div className="px-2.5 py-1 text-center border-r border-slate-800">
+                <div className="text-[10px] text-slate-400">Ambient Temp</div>
+                <div className="font-mono font-bold text-slate-100">{selectedHotspot.ambientTempC}°C</div>
+              </div>
+              <div className="px-2.5 py-1 text-center border-r border-slate-800">
+                <div className="text-[10px] text-slate-400">Ramp Surface</div>
+                <div className="font-mono font-bold text-rose-400">{selectedHotspot.rampSurfaceTempC}°C</div>
+              </div>
+              <div className="px-2.5 py-1 text-center border-r border-slate-800">
+                <div className="text-[10px] text-slate-400">Humidity</div>
+                <div className="font-mono font-bold text-sky-400">{selectedHotspot.humidityPercent}%</div>
+              </div>
+              <div className="px-2.5 py-1 text-center">
+                <div className="text-[10px] text-slate-400">Max Exposure</div>
+                <div className="font-mono font-bold text-amber-400">{selectedHotspot.tarmacExposureRiskMins}m</div>
+              </div>
+            </div>
+          </div>
+
+          {/* Facility & Cold-Chain Protocol */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+            <div className="bg-slate-950/70 p-3 rounded-lg border border-slate-800/80">
+              <div className="flex items-center gap-1.5 font-bold text-slate-200 mb-1">
+                <ShieldAlert className="w-4 h-4 text-amber-400" />
+                CEIV Pharma Cold-Chain Infrastructure
+              </div>
+              <p className="text-slate-400 leading-relaxed mb-2">
+                {selectedHotspot.coldStorageFacilityRating}
+              </p>
+              <div className="text-[11px] text-slate-300 bg-slate-900/80 p-2 rounded border border-slate-800">
+                <strong className="text-teal-400">Action Protocol: </strong>
+                {selectedHotspot.recommendation}
+              </div>
+            </div>
+
+            <div className="bg-slate-950/70 p-3 rounded-lg border border-slate-800/80">
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="font-bold text-slate-200 flex items-center gap-1.5">
+                  <Layers className="w-4 h-4 text-teal-400" />
+                  Active Shipments Traversing This Zone ({selectedHotspot.affectedLaneCodes.length})
+                </span>
+              </div>
+              <div className="flex flex-wrap gap-1.5 mb-2">
+                {selectedHotspot.affectedLaneCodes.map((code) => {
+                  const matchedLane = lanes.find(l => l.laneCode === code);
+                  return (
+                    <button
+                      key={code}
+                      onClick={() => matchedLane && onSelectLane(matchedLane)}
+                      className="px-2.5 py-1 rounded bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 font-mono text-[11px] flex items-center gap-1 transition-colors"
+                    >
+                      {code}
+                      <ArrowRight className="w-3 h-3 text-slate-400" />
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="text-[11px] text-slate-400 italic">
+                Click any lane code above to inspect real-time core telemetry and thermal margin status.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};

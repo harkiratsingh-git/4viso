@@ -1,0 +1,6 @@
+{
+  "name": "PharmaTrack - Pharmaceutical Logistics & Risk Assessment Dashboard",
+  "description": "Intelligence-driven pharmaceutical cold-chain logistics dashboard featuring risk lane assessment, temperature monitoring, real-time alerts, GDP compliance audit trails, and automated reporting.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
