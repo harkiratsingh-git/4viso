@@ -243,19 +243,15 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
                     <span>
                       Sync Status: {syncResult.status === 'synced' ? 'Live Cloud Connected' : syncResult.status === 'offline_cached' ? 'Fast Local Persistence' : 'Sync Notice'}
                     </span>
-                    <span className="text-[10px] font-mono opacity-80">{new Date(syncResult.lastSyncTimestamp).toLocaleTimeString()}</span>
+                    <span className="text-[10px] font-mono opacity-80">{syncResult.lastSyncedAt ? new Date(syncResult.lastSyncedAt).toLocaleTimeString() : '--'}</span>
                   </div>
                   <p className="text-[11px] opacity-90 mb-2">
                     {syncResult.errorMessage || 'All pharmaceutical lane records, real-time alerts, and audit logs successfully synced.'}
                   </p>
-                  <div className="grid grid-cols-4 gap-2 text-center text-[10px]">
+                  <div className="grid grid-cols-3 gap-2 text-center text-[10px]">
                     <div className="bg-slate-900/60 p-1.5 rounded">
                       <span className="block opacity-75">Lanes</span>
                       <strong>{syncResult.syncedTables.lanes}</strong>
-                    </div>
-                    <div className="bg-slate-900/60 p-1.5 rounded">
-                      <span className="block opacity-75">Telemetry</span>
-                      <strong>{syncResult.syncedTables.telemetry}</strong>
                     </div>
                     <div className="bg-slate-900/60 p-1.5 rounded">
                       <span className="block opacity-75">Alerts</span>

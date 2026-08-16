@@ -32,7 +32,7 @@ import { AutomatedReportingModal } from './components/AutomatedReportingModal';
 import { SupabaseSyncModal } from './components/SupabaseSyncModal';
 import { SettingsPage } from './components/SettingsPage';
 import { LoginPage } from './components/LoginPage';
-import { getActiveUser, setActiveUser as persistActiveUser } from './services/supabaseService';
+import { getActiveUser, setActiveUser as persistActiveUser, DEFAULT_SUPABASE_USER } from './services/supabaseService';
 import { 
   LayoutDashboard, 
   Layers, 
@@ -122,7 +122,7 @@ export default function App() {
           const newReading: TemperatureReading = {
             timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
             coreTemp: newTemp,
-            ambientTemp: Number((latestReading?.ambientTemp || 22 + delta * 2).toFixed(1)),
+            ambientTemp: Number(((latestReading?.ambientTemp || 22) + delta * 2).toFixed(1)),
             surfaceTemp: Number((newTemp + 0.2).toFixed(1)),
             minPermitted: lane.tempMin,
             maxPermitted: lane.tempMax,
@@ -199,6 +199,15 @@ export default function App() {
     }
     setActiveTab('DASHBOARD');
     appendAuditLog('AUTH', 'User Authentication Success', 'SECURITY', `User authenticated as ${user.name} (${user.role}) via ${user.authProvider || 'Email/Password'}.`);
+  };
+
+  // Sign out current user and return to login screen
+  const handleLogout = () => {
+    appendAuditLog('AUTH', 'User Signed Out', 'SECURITY', `${currentUser?.name || activeRole.name} ended their authenticated session.`);
+    persistActiveUser(DEFAULT_SUPABASE_USER);
+    setCurrentUser(DEFAULT_SUPABASE_USER);
+    setActiveRole(USER_ROLES[0]);
+    setActiveTab('LOGIN');
   };
 
   // Add new lane handler
@@ -382,6 +391,7 @@ export default function App() {
         onOpenCloudSync={() => setIsCloudSyncOpen(true)}
         onOpenSettings={() => setActiveTab('SETTINGS')}
         onOpenLogin={() => setActiveTab('LOGIN')}
+        onLogout={handleLogout}
         currentUser={currentUser}
         searchQuery={filters.searchQuery}
         onSearchChange={(q) => setFilters(prev => ({ ...prev, searchQuery: q }))}

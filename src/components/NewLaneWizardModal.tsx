@@ -16,6 +16,7 @@ import {
   Sparkles
 } from 'lucide-react';
 import { TransportLane, TransportMode, TemperatureRangeType, RiskFactor } from '../types';
+import { getAirportCoords } from '../utils/geo';
 
 interface NewLaneWizardModalProps {
   onClose: () => void;
@@ -115,11 +116,11 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
       originCity,
       originIata: originIata.toUpperCase(),
       originCountry,
-      originCoords: [50.0, 8.5],
+      originCoords: getAirportCoords(originIata),
       destinationCity: destCity,
       destinationIata: destIata.toUpperCase(),
       destinationCountry: destCountry,
-      destinationCoords: [1.3, 103.8],
+      destinationCoords: getAirportCoords(destIata),
       carrier,
       mode,
       productName,

@@ -30,6 +30,7 @@ interface HeaderProps {
   onOpenCloudSync?: () => void;
   onOpenSettings?: () => void;
   onOpenLogin?: () => void;
+  onLogout?: () => void;
   currentUser?: SupabaseUser;
   searchQuery: string;
   onSearchChange: (query: string) => void;
@@ -56,6 +57,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenCloudSync,
   onOpenSettings,
   onOpenLogin,
+  onLogout,
   currentUser,
   searchQuery,
   onSearchChange,
@@ -299,7 +301,7 @@ export const Header: React.FC<HeaderProps> = ({
                     <button
                       onClick={() => {
                         setIsUserMenuOpen(false);
-                        if (onOpenLogin) onOpenLogin();
+                        if (onLogout) onLogout();
                       }}
                       className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-rose-500/20 text-rose-300 flex items-center gap-2"
                     >
