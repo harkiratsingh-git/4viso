@@ -1,33 +1,52 @@
-import React, { useState } from 'react';
-import { 
-  X, 
-  Plane, 
-  Ship, 
-  Truck, 
-  Layers, 
-  Check, 
-  ArrowRight, 
-  ArrowLeft, 
-  Thermometer, 
-  Bell, 
-  ShieldCheck, 
-  Clock, 
+import React, { useMemo, useState } from 'react';
+import {
+  X,
+  Plane,
+  Ship,
+  Truck,
+  Layers,
+  Check,
+  ArrowRight,
+  ArrowLeft,
+  Thermometer,
+  Bell,
+  ShieldCheck,
+  ShieldAlert,
+  AlertTriangle,
+  Clock,
   Zap,
-  Sparkles
+  Sparkles,
+  Plus,
+  Trash2,
+  ChevronUp,
+  ChevronDown,
+  MapPin,
+  Route as RouteIcon,
 } from 'lucide-react';
-import { TransportLane, TransportMode, TemperatureRangeType, RiskFactor } from '../types';
+import { TransportLane, TransportMode, TemperatureRangeType, RiskFactor, RouteStop } from '../types';
 import { getAirportCoords } from '../utils/geo';
+import { assessRoute } from '../utils/riskAssessment';
+import { getRiskColor } from '../utils/formatters';
 
 interface NewLaneWizardModalProps {
   onClose: () => void;
   onCreateLane: (newLane: TransportLane) => void;
 }
 
+interface DraftStop {
+  id: string;
+  city: string;
+  iata: string;
+  country: string;
+  stopType: RouteStop['stopType'];
+  plannedDwellHours: number;
+}
+
 export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
   onClose,
   onCreateLane,
 }) => {
-  const [step, setStep] = useState<1 | 2 | 3>(1);
+  const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
 
   // Step 1: Mode
   const [mode, setMode] = useState<TransportMode>('Air');
@@ -39,6 +58,7 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
   const [destCity, setDestCity] = useState<string>('Singapore');
   const [destIata, setDestIata] = useState<string>('SIN');
   const [destCountry, setDestCountry] = useState<string>('Singapore');
+  const [stops, setStops] = useState<DraftStop[]>([]);
   const [carrier, setCarrier] = useState<string>('Lufthansa Cargo');
   const [productName, setProductName] = useState<string>('Lyophilized Biologics & Vaccines');
   const [productCategory, setProductCategory] = useState<TransportLane['productCategory']>('Vaccines');
@@ -47,7 +67,7 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
   const [tempMin, setTempMin] = useState<number>(2.0);
   const [tempMax, setTempMax] = useState<number>(8.0);
 
-  // Step 3: Threshold Alerts
+  // Step 4: Threshold Alerts
   const [maxExcursionMinutes, setMaxExcursionMinutes] = useState<number>(15);
   const [warningTolerance, setWarningTolerance] = useState<number>(0.5);
   const [maxAllowedDelay, setMaxAllowedDelay] = useState<number>(3);
@@ -73,15 +93,80 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
     }
   };
 
+  // Multi-stop route management
+  const handleAddStop = () => {
+    setStops((prev) => [
+      ...prev,
+      {
+        id: `stop-${Date.now()}`,
+        city: '',
+        iata: '',
+        country: '',
+        stopType: 'Transit Hub',
+        plannedDwellHours: 2,
+      },
+    ]);
+  };
+
+  const handleUpdateStop = (id: string, patch: Partial<DraftStop>) => {
+    setStops((prev) => prev.map((s) => (s.id === id ? { ...s, ...patch } : s)));
+  };
+
+  const handleRemoveStop = (id: string) => {
+    setStops((prev) => prev.filter((s) => s.id !== id));
+  };
+
+  const handleMoveStop = (id: string, direction: -1 | 1) => {
+    setStops((prev) => {
+      const idx = prev.findIndex((s) => s.id === id);
+      const target = idx + direction;
+      if (idx === -1 || target < 0 || target >= prev.length) return prev;
+      const next = [...prev];
+      [next[idx], next[target]] = [next[target], next[idx]];
+      return next;
+    });
+  };
+
+  // Live risk assessment of the drafted route (Step 3)
+  const assessment = useMemo(() => {
+    if (!originIata.trim() || !destIata.trim()) return null;
+    return assessRoute({
+      origin: { iata: originIata.toUpperCase(), coords: getAirportCoords(originIata), label: 'Origin' },
+      destination: { iata: destIata.toUpperCase(), coords: getAirportCoords(destIata), label: 'Destination' },
+      stops: stops
+        .filter((s) => s.iata.trim())
+        .map((s) => ({ iata: s.iata.toUpperCase(), coords: getAirportCoords(s.iata), label: s.city || s.iata })),
+      mode,
+      tempMin,
+      tempMax,
+    });
+  }, [originIata, destIata, stops, mode, tempMin, tempMax]);
+
   const handleFinish = () => {
     const laneCode = `${originIata.toUpperCase()}-${destIata.toUpperCase()}-${Math.floor(10 + Math.random() * 89)}`;
     const initTemp = Number(((tempMin + tempMax) / 2 + 0.2).toFixed(1));
 
-    // Automated Composite Risk Calculation
+    // Automated Composite Risk Calculation, blended with the live route risk assessment
     let initialRiskScore = mode === 'Air' ? 14 : mode === 'Sea' ? 24 : mode === 'Road' ? 18 : 20;
     if (tempRangeType.includes('-80') || tempRangeType.includes('-20')) {
       initialRiskScore += 10;
     }
+    if (assessment) {
+      initialRiskScore = Math.round((initialRiskScore + assessment.overallScore) / 2);
+    }
+
+    const routeStops: RouteStop[] = stops
+      .filter((s) => s.iata.trim())
+      .map((s, i) => ({
+        id: s.id,
+        sequence: i + 1,
+        city: s.city || s.iata.toUpperCase(),
+        iata: s.iata.toUpperCase(),
+        country: s.country,
+        coords: getAirportCoords(s.iata),
+        stopType: s.stopType,
+        plannedDwellHours: s.plannedDwellHours,
+      }));
 
     const defaultRisks: RiskFactor[] = [
       {
@@ -107,7 +192,25 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
         impact: 'Minor',
         mitigationStrategy: 'IoT telemetry probe linked to carrier tracking API.',
         recommendedAction: 'Continuous automated polling enabled.'
-      }
+      },
+      ...(assessment
+        ? assessment.legs
+            .filter((l) => l.flags.length > 0)
+            .map((l, i) => ({
+              id: `r-${Date.now()}-hotspot-${i}`,
+              category: 'Weather & Environment' as const,
+              title: `${l.label} (${l.iata}) Thermal Corridor Exposure`,
+              description: l.flags.join(' '),
+              severity: (l.riskScore >= 30 ? 'High' : 'Medium') as RiskFactor['severity'],
+              score: l.riskScore,
+              likelihood: 'Moderate' as const,
+              impact: 'Major' as const,
+              mitigationStrategy: assessment.suggestedHubs.length
+                ? `Consider rerouting via ${assessment.suggestedHubs.join(', ')} instead.`
+                : 'Deploy thermal cover wrap and minimize tarmac dwell time at this stop.',
+              recommendedAction: 'Reassess this leg before dispatch; monitor telemetry closely on arrival.'
+            }))
+        : [])
     ];
 
     const newLane: TransportLane = {
@@ -121,6 +224,7 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
       destinationIata: destIata.toUpperCase(),
       destinationCountry: destCountry,
       destinationCoords: getAirportCoords(destIata),
+      stops: routeStops,
       carrier,
       mode,
       productName,
@@ -162,10 +266,12 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
     onClose();
   };
 
+  const stepLabels = ['1. Transport Mode', '2. Route & Cargo', '3. Risk Assessment', '4. Threshold Alerts'];
+
   return (
     <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
-      <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-3xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-        
+      <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-4xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+
         {/* Wizard Header */}
         <div className="p-4 sm:p-5 bg-slate-950 border-b border-slate-800 flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -174,10 +280,10 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
             </div>
             <div>
               <h2 className="text-base sm:text-lg font-bold text-white">
-                Lane Creation: Guided 3-Step Wizard
+                Lane Creation: Guided 4-Step Wizard
               </h2>
               <p className="text-xs text-slate-400">
-                Slide 9: "Under 3 Minutes: From mode selection to a fully monitored, alert-ready lane"
+                Multi-stop route builder with automatic thermal-corridor risk assessment before provisioning
               </p>
             </div>
           </div>
@@ -190,38 +296,25 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
         </div>
 
         {/* Step Indicator Bar */}
-        <div className="bg-slate-950/80 px-6 py-3 border-b border-slate-800 grid grid-cols-3 gap-2 text-xs">
-          <div className={`flex items-center gap-2 ${step >= 1 ? 'text-emerald-400 font-bold' : 'text-slate-500'}`}>
-            <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] ${
-              step >= 1 ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40' : 'bg-slate-800'
-            }`}>
-              1
-            </span>
-            <span>1. Transport Mode</span>
-          </div>
-
-          <div className={`flex items-center gap-2 ${step >= 2 ? 'text-emerald-400 font-bold' : 'text-slate-500'}`}>
-            <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] ${
-              step >= 2 ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40' : 'bg-slate-800'
-            }`}>
-              2
-            </span>
-            <span>2. Route & Cargo</span>
-          </div>
-
-          <div className={`flex items-center gap-2 ${step >= 3 ? 'text-emerald-400 font-bold' : 'text-slate-500'}`}>
-            <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] ${
-              step >= 3 ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40' : 'bg-slate-800'
-            }`}>
-              3
-            </span>
-            <span>3. Threshold Alerts</span>
-          </div>
+        <div className="bg-slate-950/80 px-6 py-3 border-b border-slate-800 grid grid-cols-4 gap-2 text-xs">
+          {stepLabels.map((label, i) => {
+            const n = i + 1;
+            return (
+              <div key={label} className={`flex items-center gap-2 ${step >= n ? 'text-emerald-400 font-bold' : 'text-slate-500'}`}>
+                <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] ${
+                  step >= n ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40' : 'bg-slate-800'
+                }`}>
+                  {n}
+                </span>
+                <span className="truncate">{label}</span>
+              </div>
+            );
+          })}
         </div>
 
         {/* Wizard Step Body */}
         <div className="flex-1 overflow-y-auto p-5 sm:p-6 text-xs text-slate-200">
-          
+
           {/* STEP 1: Select Transport Mode */}
           {step === 1 && (
             <div className="space-y-4">
@@ -235,7 +328,7 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 pt-2">
-                
+
                 {/* Mode: Air */}
                 <div
                   onClick={() => setMode('Air')}
@@ -332,15 +425,17 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
                   Step 2: Define Route & Cargo Sensitivity
                 </h3>
                 <p className="text-slate-400">
-                  Map the origin, destination, carrier, and pharmaceutical product profile so the lane mirrors the real shipment path.
+                  Map the origin, destination, any intermediate stops, carrier, and pharmaceutical product profile so the lane mirrors the real shipment path.
                 </p>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                
+
                 {/* Origin Hub */}
                 <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800 space-y-2">
-                  <div className="font-bold text-emerald-400">Origin Departure Hub</div>
+                  <div className="font-bold text-emerald-400 flex items-center gap-1.5">
+                    <MapPin className="w-3.5 h-3.5" /> Origin Departure Hub
+                  </div>
                   <div className="grid grid-cols-2 gap-2">
                     <div>
                       <label className="text-[10px] text-slate-400">City</label>
@@ -365,7 +460,9 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
 
                 {/* Destination Hub */}
                 <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800 space-y-2">
-                  <div className="font-bold text-emerald-400">Destination Arrival Hub</div>
+                  <div className="font-bold text-emerald-400 flex items-center gap-1.5">
+                    <MapPin className="w-3.5 h-3.5" /> Destination Arrival Hub
+                  </div>
                   <div className="grid grid-cols-2 gap-2">
                     <div>
                       <label className="text-[10px] text-slate-400">City</label>
@@ -385,6 +482,125 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
                         className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1 text-slate-100 uppercase"
                       />
                     </div>
+                  </div>
+                </div>
+
+                {/* Intermediate Stops */}
+                <div className="sm:col-span-2 p-3 rounded-xl bg-slate-950/80 border border-slate-800 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <div className="font-bold text-teal-400 flex items-center gap-1.5">
+                      <RouteIcon className="w-3.5 h-3.5" /> Intermediate Stops ({stops.length})
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleAddStop}
+                      className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-teal-500/15 hover:bg-teal-500/25 text-teal-300 border border-teal-500/30 text-[11px] font-semibold transition-all"
+                    >
+                      <Plus className="w-3.5 h-3.5" /> Add Stop
+                    </button>
+                  </div>
+                  <p className="text-[11px] text-slate-400">
+                    Real logistics lanes rarely run point-to-point. Add layover hubs, customs clearance points, or carrier handovers between {originIata.toUpperCase() || 'origin'} and {destIata.toUpperCase() || 'destination'} — each is scored for thermal risk in Step 3, and stops can be reordered or dropped to manage that risk.
+                  </p>
+
+                  {stops.length === 0 ? (
+                    <div className="text-center py-4 text-slate-500 text-[11px] border border-dashed border-slate-800 rounded-lg">
+                      Direct route — no intermediate stops added.
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {stops.map((s, i) => (
+                        <div key={s.id} className="p-2.5 rounded-lg bg-slate-900 border border-slate-800 flex flex-wrap items-center gap-2">
+                          <span className="w-5 h-5 rounded-full bg-slate-800 text-slate-300 flex items-center justify-center text-[10px] font-bold flex-shrink-0">
+                            {i + 1}
+                          </span>
+                          <input
+                            type="text"
+                            value={s.city}
+                            onChange={(e) => handleUpdateStop(s.id, { city: e.target.value })}
+                            placeholder="City"
+                            className="w-28 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-slate-100"
+                          />
+                          <input
+                            type="text"
+                            value={s.iata}
+                            onChange={(e) => handleUpdateStop(s.id, { iata: e.target.value.toUpperCase() })}
+                            placeholder="IATA"
+                            className="w-16 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-slate-100 uppercase"
+                          />
+                          <input
+                            type="text"
+                            value={s.country}
+                            onChange={(e) => handleUpdateStop(s.id, { country: e.target.value })}
+                            placeholder="Country"
+                            className="w-24 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-slate-100"
+                          />
+                          <select
+                            value={s.stopType}
+                            onChange={(e) => handleUpdateStop(s.id, { stopType: e.target.value as RouteStop['stopType'] })}
+                            className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-slate-100"
+                          >
+                            <option value="Transit Hub">Transit Hub</option>
+                            <option value="Customs Clearance">Customs Clearance</option>
+                            <option value="Carrier Handover">Carrier Handover</option>
+                            <option value="Cold Storage Layover">Cold Storage Layover</option>
+                          </select>
+                          <div className="flex items-center gap-1">
+                            <input
+                              type="number"
+                              min="0"
+                              max="72"
+                              value={s.plannedDwellHours}
+                              onChange={(e) => handleUpdateStop(s.id, { plannedDwellHours: parseFloat(e.target.value) || 0 })}
+                              className="w-14 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-slate-100"
+                            />
+                            <span className="text-[10px] text-slate-400">hrs dwell</span>
+                          </div>
+
+                          <div className="flex items-center gap-1 ml-auto">
+                            <button
+                              type="button"
+                              onClick={() => handleMoveStop(s.id, -1)}
+                              disabled={i === 0}
+                              className="p-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 disabled:opacity-30 disabled:cursor-not-allowed"
+                              title="Move earlier in route"
+                            >
+                              <ChevronUp className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleMoveStop(s.id, 1)}
+                              disabled={i === stops.length - 1}
+                              className="p-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 disabled:opacity-30 disabled:cursor-not-allowed"
+                              title="Move later in route"
+                            >
+                              <ChevronDown className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveStop(s.id)}
+                              className="p-1 rounded bg-rose-500/15 hover:bg-rose-500/25 text-rose-300"
+                              title="Remove stop"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Route Preview Breadcrumb */}
+                  <div className="pt-2 border-t border-slate-800 flex items-center flex-wrap gap-1.5 text-[11px] font-mono text-slate-300">
+                    <span className="px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">{originIata.toUpperCase() || '???'}</span>
+                    {stops.map((s) => (
+                      <React.Fragment key={s.id}>
+                        <ArrowRight className="w-3 h-3 text-slate-500" />
+                        <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">{s.iata.toUpperCase() || '???'}</span>
+                      </React.Fragment>
+                    ))}
+                    <ArrowRight className="w-3 h-3 text-slate-500" />
+                    <span className="px-2 py-0.5 rounded bg-purple-500/15 text-purple-300 border border-purple-500/30">{destIata.toUpperCase() || '???'}</span>
                   </div>
                 </div>
 
@@ -454,12 +670,117 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
             </div>
           )}
 
-          {/* STEP 3: Set Threshold Alerts */}
+          {/* STEP 3: Risk Assessment & Recommendation */}
           {step === 3 && (
             <div className="space-y-4">
               <div>
                 <h3 className="text-sm font-bold text-white mb-1">
-                  Step 3: Set Automatic Alert Thresholds
+                  Step 3: Route Risk Assessment & Recommendation
+                </h3>
+                <p className="text-slate-400">
+                  Automatic scoring of this route against known thermal-hotspot corridors, transport mode, and handling exposure — before the lane is provisioned.
+                </p>
+              </div>
+
+              {!assessment ? (
+                <div className="p-4 rounded-xl bg-slate-950/70 border border-slate-800 text-slate-400 text-center">
+                  Enter an origin and destination IATA code in Step 2 to generate a risk assessment.
+                </div>
+              ) : (
+                <>
+                  {/* Overall Verdict Banner */}
+                  <div className={`p-4 rounded-xl border flex items-center justify-between gap-4 ${
+                    assessment.verdict === 'Recommended'
+                      ? 'bg-emerald-950/30 border-emerald-800/50'
+                      : assessment.verdict === 'Review Recommended'
+                      ? 'bg-amber-950/30 border-amber-800/50'
+                      : 'bg-rose-950/30 border-rose-800/50'
+                  }`}>
+                    <div className="flex items-center gap-3">
+                      {assessment.verdict === 'Recommended' ? (
+                        <ShieldCheck className="w-8 h-8 text-emerald-400 flex-shrink-0" />
+                      ) : assessment.verdict === 'Review Recommended' ? (
+                        <ShieldAlert className="w-8 h-8 text-amber-400 flex-shrink-0" />
+                      ) : (
+                        <AlertTriangle className="w-8 h-8 text-rose-400 flex-shrink-0" />
+                      )}
+                      <div>
+                        <div className={`text-sm font-extrabold ${
+                          assessment.verdict === 'Recommended' ? 'text-emerald-300' : assessment.verdict === 'Review Recommended' ? 'text-amber-300' : 'text-rose-300'
+                        }`}>
+                          {assessment.verdict}
+                        </div>
+                        <p className="text-[11px] text-slate-400">
+                          Composite route risk score: <strong className="text-slate-200">{assessment.overallScore}%</strong> ({assessment.overallLevel})
+                        </p>
+                      </div>
+                    </div>
+                    <div className="w-24 bg-slate-800 h-2 rounded-full overflow-hidden flex-shrink-0">
+                      <div
+                        className="h-full rounded-full transition-all"
+                        style={{ width: `${assessment.overallScore}%`, backgroundColor: getRiskColor(assessment.overallLevel).fill }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Per-Leg Breakdown */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {assessment.legs.map((leg) => {
+                      const legStyles = getRiskColor(leg.riskScore >= 30 ? 'High' : leg.riskScore >= 15 ? 'Medium' : 'Low');
+                      return (
+                        <div key={`${leg.label}-${leg.iata}`} className={`p-3 rounded-xl border ${legStyles.bg} ${legStyles.border}`}>
+                          <div className="flex items-center justify-between mb-1.5">
+                            <span className="text-xs font-bold text-slate-200">{leg.label} • {leg.iata}</span>
+                            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${legStyles.badge}`}>
+                              {leg.riskScore}%
+                            </span>
+                          </div>
+                          {leg.flags.length === 0 ? (
+                            <p className="text-[11px] text-slate-400">No hotspot conflicts detected.</p>
+                          ) : (
+                            leg.flags.map((f, i) => (
+                              <p key={i} className="text-[11px] text-slate-300 leading-relaxed mb-1">{f}</p>
+                            ))
+                          )}
+                          {leg.label.startsWith('Stop') && (
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveStop(stops.find((s) => s.iata.toUpperCase() === leg.iata)?.id || '')}
+                              className="mt-1.5 text-[11px] font-semibold text-rose-300 hover:text-rose-200 flex items-center gap-1"
+                            >
+                              <Trash2 className="w-3 h-3" /> Remove this stop
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Recommendations */}
+                  <div className="p-3.5 rounded-xl bg-slate-950/80 border border-slate-800">
+                    <div className="text-[11px] font-bold text-teal-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                      <Sparkles className="w-3.5 h-3.5" /> Recommendations
+                    </div>
+                    <ul className="space-y-1.5">
+                      {assessment.recommendations.map((r, i) => (
+                        <li key={i} className="text-[11px] text-slate-300 leading-relaxed flex items-start gap-1.5">
+                          <span className="text-teal-400 mt-0.5">•</span>
+                          <span>{r}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          {/* STEP 4: Set Threshold Alerts */}
+          {step === 4 && (
+            <div className="space-y-4">
+              <div>
+                <h3 className="text-sm font-bold text-white mb-1">
+                  Step 4: Set Automatic Alert Thresholds
                 </h3>
                 <p className="text-slate-400">
                   Configure temperature excursion, transit delay, and shock limits that trigger automatic risk alerts.
@@ -467,7 +788,7 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                
+
                 {/* Max Temp Excursion Time */}
                 <div className="p-3.5 bg-slate-950/70 border border-slate-800 rounded-xl">
                   <div className="flex items-center justify-between mb-1">
@@ -601,7 +922,7 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
             </button>
           )}
 
-          {step < 3 ? (
+          {step < 4 ? (
             <button
               onClick={() => setStep((step + 1) as any)}
               className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-lg transition-all"

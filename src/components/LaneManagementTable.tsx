@@ -199,13 +199,20 @@ export const LaneManagementTable: React.FC<LaneManagementTableProps> = ({
                           {getModeIcon(lane.mode)}
                         </div>
                         <div>
-                          <div className="font-bold text-white text-sm flex items-center gap-1.5">
+                          <div className="font-bold text-white text-sm flex items-center gap-1.5 flex-wrap">
                             <span>{lane.originIata}</span>
+                            {lane.stops.map((s) => (
+                              <React.Fragment key={s.id}>
+                                <span className="text-slate-600 font-normal">›</span>
+                                <span className="text-slate-400 text-xs">{s.iata}</span>
+                              </React.Fragment>
+                            ))}
                             <span className="text-slate-500 font-normal">→</span>
                             <span>{lane.destinationIata}</span>
                           </div>
                           <div className="text-[11px] text-slate-400 font-mono">
                             {lane.laneCode} • {lane.originCity} to {lane.destinationCity}
+                            {lane.stops.length > 0 && ` • ${lane.stops.length} stop${lane.stops.length > 1 ? 's' : ''}`}
                           </div>
                         </div>
                       </div>

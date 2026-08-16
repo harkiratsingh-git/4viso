@@ -8,6 +8,18 @@ export type RiskLevel = 'Low' | 'Medium' | 'High' | 'Critical';
 
 export type TemperatureRangeType = '2°C to 8°C (Cold Chain)' | '-20°C (Deep Freeze)' | '-80°C (Cryogenic)' | '15°C to 25°C (Controlled Room Temp)';
 
+export interface RouteStop {
+  id: string;
+  sequence: number; // 1-based order between origin and destination
+  city: string;
+  iata: string;
+  country: string;
+  coords: [number, number]; // [lat, lng]
+  stopType: 'Transit Hub' | 'Customs Clearance' | 'Carrier Handover' | 'Cold Storage Layover';
+  plannedDwellHours: number;
+  riskNote?: string;
+}
+
 export interface RiskFactor {
   id: string;
   category: 'Temperature Stability' | 'Transit Delay' | 'Handling Quality' | 'Regulatory & GDP' | 'Carrier Reliability' | 'Weather & Environment';
@@ -45,6 +57,7 @@ export interface TransportLane {
   destinationIata: string;
   destinationCountry: string;
   destinationCoords: [number, number]; // [lat, lng]
+  stops: RouteStop[]; // intermediate waypoints between origin and destination, in sequence order
   carrier: string;
   carrierLogo?: string;
   mode: TransportMode;
@@ -191,13 +204,18 @@ export interface SupabaseUser {
 }
 
 export interface CloudSyncState {
-  status: 'idle' | 'syncing' | 'synced' | 'offline_cached' | 'error';
+  status: 'idle' | 'syncing' | 'synced' | 'partial' | 'offline_cached' | 'error';
   lastSyncedAt: string | null;
   errorMessage: string | null;
   syncedTables: {
     lanes: number;
     alerts: number;
     auditLogs: number;
+  };
+  tableErrors?: {
+    lanes?: string;
+    alerts?: string;
+    auditLogs?: string;
   };
 }
 

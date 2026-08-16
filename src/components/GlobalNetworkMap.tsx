@@ -16,19 +16,13 @@ import {
 import { TransportLane } from '../types';
 import { RegionalTemperatureHeatmapView } from './RegionalTemperatureHeatmapView';
 import { GoogleMapsNetworkView } from './GoogleMapsNetworkView';
+import { projectMercator, buildMultiStopPathD, pointOnMultiStopPath } from '../utils/routePath';
 
 interface GlobalNetworkMapProps {
   lanes: TransportLane[];
   selectedLaneId: string | null;
   onSelectLane: (lane: TransportLane) => void;
   onOpenGoogleMapsConfig?: () => void;
-}
-
-// Simple Mercator-like projection for 1000x500 SVG canvas
-function projectCoordinates(lat: number, lng: number): [number, number] {
-  const x = ((lng + 180) / 360) * 920 + 40;
-  const y = ((80 - lat) / 140) * 420 + 40;
-  return [Math.max(20, Math.min(980, x)), Math.max(20, Math.min(480, y))];
 }
 
 export const GlobalNetworkMap: React.FC<GlobalNetworkMapProps> = ({
@@ -214,22 +208,22 @@ export const GlobalNetworkMap: React.FC<GlobalNetworkMapProps> = ({
               </ellipse>
               <text x="780" y="208" fill="#fde68a" fontSize="8" textAnchor="middle" fontWeight="bold">Port Delay +48h</text>
 
-              {/* Route Arcs */}
+              {/* Route Arcs (through any intermediate stops) */}
               {visibleLanes.map((lane) => {
-                const [x1, y1] = projectCoordinates(lane.originCoords[0], lane.originCoords[1]);
-                const [x2, y2] = projectCoordinates(lane.destinationCoords[0], lane.destinationCoords[1]);
+                const routePoints: [number, number][] = [
+                  projectMercator(lane.originCoords[0], lane.originCoords[1]),
+                  ...lane.stops.map((s) => projectMercator(s.coords[0], s.coords[1])),
+                  projectMercator(lane.destinationCoords[0], lane.destinationCoords[1]),
+                ];
+                const [x1, y1] = routePoints[0];
+                const [x2, y2] = routePoints[routePoints.length - 1];
 
                 const isSelected = selectedLaneId === lane.id;
                 const isCritical = lane.status === 'Temperature Alert' || lane.riskScore >= 50;
                 const isWarning = lane.riskScore >= 30 || lane.status === 'Delayed';
 
-                const midX = (x1 + x2) / 2;
-                const midY = Math.min(y1, y2) - Math.abs(x1 - x2) * 0.18;
-                const pathD = `M ${x1} ${y1} Q ${midX} ${midY} ${x2} ${y2}`;
-
-                const t = lane.transitProgress / 100;
-                const curX = (1 - t) * (1 - t) * x1 + 2 * (1 - t) * t * midX + t * t * x2;
-                const curY = (1 - t) * (1 - t) * y1 + 2 * (1 - t) * t * midY + t * t * y2;
+                const pathD = buildMultiStopPathD(routePoints);
+                const [curX, curY] = pointOnMultiStopPath(routePoints, lane.transitProgress);
 
                 const strokeColor = isCritical ? '#f43f5e' : isWarning ? '#f59e0b' : '#10b981';
 
@@ -258,6 +252,18 @@ export const GlobalNetworkMap: React.FC<GlobalNetworkMapProps> = ({
                     <text x={x1} y={y1 - 6} fill="#94a3b8" fontSize="8" textAnchor="middle" fontWeight="bold">
                       {lane.originIata}
                     </text>
+
+                    {lane.stops.map((s) => {
+                      const [sx, sy] = projectMercator(s.coords[0], s.coords[1]);
+                      return (
+                        <g key={s.id}>
+                          <circle cx={sx} cy={sy} r={isSelected ? 3.5 : 2.5} fill="#f8fafc" stroke="#0f172a" strokeWidth="1" />
+                          <text x={sx} y={sy - 5} fill="#cbd5e1" fontSize="7" textAnchor="middle" fontWeight="bold">
+                            {s.iata}
+                          </text>
+                        </g>
+                      );
+                    })}
 
                     <circle cx={x2} cy={y2} r={isSelected ? 4.5 : 3.5} fill="#a855f7" stroke="#0f172a" strokeWidth="1" />
                     <text x={x2} y={y2 - 6} fill="#94a3b8" fontSize="8" textAnchor="middle" fontWeight="bold">
@@ -305,10 +311,13 @@ export const GlobalNetworkMap: React.FC<GlobalNetworkMapProps> = ({
                         </span>
                       </div>
                       <div className="text-slate-300 font-medium">
-                        {active.originCity} ({active.originIata}) → {active.destinationCity} ({active.destinationIata})
+                        {active.originCity} ({active.originIata})
+                        {active.stops.map((s) => ` → ${s.iata}`).join('')}
+                        {' '}→ {active.destinationCity} ({active.destinationIata})
                       </div>
                       <div className="text-slate-400 text-[11px] mt-0.5">
                         {active.carrier} • {active.productName}
+                        {active.stops.length > 0 && ` • ${active.stops.length} stop${active.stops.length > 1 ? 's' : ''}`}
                       </div>
                       <div className="mt-2 flex items-center justify-between text-[11px] pt-1.5 border-t border-slate-800">
                         <span>Temp: <strong className={active.currentTemp > active.tempMax || active.currentTemp < active.tempMin ? 'text-rose-400' : 'text-emerald-400'}>{active.currentTemp}°C</strong></span>

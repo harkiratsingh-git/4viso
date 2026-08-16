@@ -32,7 +32,7 @@ import { AutomatedReportingModal } from './components/AutomatedReportingModal';
 import { SupabaseSyncModal } from './components/SupabaseSyncModal';
 import { SettingsPage } from './components/SettingsPage';
 import { LoginPage } from './components/LoginPage';
-import { getActiveUser, setActiveUser as persistActiveUser, DEFAULT_SUPABASE_USER } from './services/supabaseService';
+import { getActiveUser, setActiveUser as persistActiveUser, DEFAULT_SUPABASE_USER, fetchAllFromSupabase } from './services/supabaseService';
 import { 
   LayoutDashboard, 
   Layers, 
@@ -105,6 +105,36 @@ export default function App() {
 
   // Simulation engine state
   const [isSimulating, setIsSimulating] = useState<boolean>(true);
+
+  // Cloud data source state — whether the dashboard is showing live Supabase data or the local demo dataset
+  const [dataSource, setDataSource] = useState<'loading' | 'cloud' | 'local'>('loading');
+
+  // On mount, attempt to load real data from the connected Supabase project.
+  // Falls back to the local demo dataset (already the initial state above) if unavailable.
+  useEffect(() => {
+    let cancelled = false;
+
+    fetchAllFromSupabase()
+      .then(result => {
+        if (cancelled) return;
+        if (result && result.lanes.length > 0) {
+          setLanes(result.lanes);
+          setAlerts(result.alerts);
+          if (result.auditLogs.length > 0) setAuditLogs(result.auditLogs);
+          setDataSource('cloud');
+        } else {
+          setDataSource('local');
+        }
+      })
+      .catch(err => {
+        console.warn('Failed to load data from Supabase, using local demo dataset:', err);
+        if (!cancelled) setDataSource('local');
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Periodic IoT telemetry background simulation ticker
   useEffect(() => {
@@ -705,7 +735,11 @@ export default function App() {
           </div>
           <div className="flex items-center gap-4 text-slate-400">
             <span>Logged in as: <strong className="text-slate-200">{activeRole.name}</strong> ({activeRole.title})</span>
-            <span className="font-mono text-emerald-400">IoT Fleet: 8 Online</span>
+            <span className={`font-mono ${dataSource === 'cloud' ? 'text-emerald-400' : dataSource === 'local' ? 'text-amber-400' : 'text-slate-500'}`}>
+              {dataSource === 'loading' && 'Connecting to Supabase…'}
+              {dataSource === 'cloud' && `Data Source: Supabase Cloud (${lanes.length} lanes live)`}
+              {dataSource === 'local' && 'Data Source: Local Demo Dataset (Supabase unavailable)'}
+            </span>
           </div>
         </div>
       </footer>

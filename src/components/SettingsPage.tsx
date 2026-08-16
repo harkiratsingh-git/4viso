@@ -138,6 +138,8 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
 
     if (res.status === 'synced') {
       setSyncFeedback(`Successfully pushed ${res.syncedTables.lanes} lanes, ${res.syncedTables.alerts} alerts, and ${res.syncedTables.auditLogs} audit logs to Supabase!`);
+    } else if (res.status === 'partial') {
+      setSyncFeedback(`Partially synced: ${res.syncedTables.lanes} lanes, ${res.syncedTables.alerts} alerts, ${res.syncedTables.auditLogs} audit logs written. Errors — ${res.errorMessage}`);
     } else if (res.status === 'offline_cached') {
       setSyncFeedback('Stored in high-speed local browser cache. (To sync with cloud, provide Supabase URL and Key above).');
     } else {

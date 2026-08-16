@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { APIProvider, Map, AdvancedMarker, Pin, InfoWindow, useAdvancedMarkerRef } from '@vis.gl/react-google-maps';
+import { APIProvider, Map, AdvancedMarker, Pin, InfoWindow, Polyline, useAdvancedMarkerRef } from '@vis.gl/react-google-maps';
 import { 
   Key, 
   Layers, 
@@ -153,8 +153,23 @@ export const GoogleMapsNetworkView: React.FC<GoogleMapsNetworkViewProps> = ({
             const isSelected = selectedLaneId === lane.id;
             const isCritical = lane.status === 'Temperature Alert' || lane.riskScore >= 50;
 
+            const routePath = [
+              { lat: lane.originCoords[0], lng: lane.originCoords[1] },
+              ...lane.stops.map((s) => ({ lat: s.coords[0], lng: s.coords[1] })),
+              { lat: lane.destinationCoords[0], lng: lane.destinationCoords[1] },
+            ];
+
             return (
               <React.Fragment key={lane.id}>
+                {/* Multi-stop Route Line */}
+                <Polyline
+                  path={routePath}
+                  strokeColor={isCritical ? '#f43f5e' : '#10b981'}
+                  strokeOpacity={isSelected ? 0.95 : 0.55}
+                  strokeWeight={isSelected ? 3 : 1.5}
+                  geodesic
+                />
+
                 {/* Origin Marker */}
                 <AdvancedMarker
                   position={{ lat: lane.originCoords[0], lng: lane.originCoords[1] }}
@@ -171,6 +186,26 @@ export const GoogleMapsNetworkView: React.FC<GoogleMapsNetworkViewProps> = ({
                     scale={isSelected ? 1.2 : 0.9}
                   />
                 </AdvancedMarker>
+
+                {/* Intermediate Stop Markers */}
+                {lane.stops.map((stop) => (
+                  <AdvancedMarker
+                    key={stop.id}
+                    position={{ lat: stop.coords[0], lng: stop.coords[1] }}
+                    title={`${stop.city} (${stop.iata}) - ${stop.stopType}`}
+                    onClick={() => {
+                      setActiveMarkerLane(lane);
+                      onSelectLane(lane);
+                    }}
+                  >
+                    <Pin
+                      background="#f8fafc"
+                      borderColor="#0f172a"
+                      glyphColor="#0f172a"
+                      scale={isSelected ? 0.85 : 0.65}
+                    />
+                  </AdvancedMarker>
+                ))}
 
                 {/* Destination Marker */}
                 <AdvancedMarker

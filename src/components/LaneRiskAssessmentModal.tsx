@@ -169,7 +169,9 @@ export const LaneRiskAssessmentModal: React.FC<LaneRiskAssessmentModalProps> = (
                 </span>
               </div>
               <p className="text-xs sm:text-sm text-slate-300 font-medium mt-0.5">
-                {lane.originCity} ({lane.originIata}) → {lane.destinationCity} ({lane.destinationIata}) • {lane.carrier} ({lane.mode})
+                {lane.originCity} ({lane.originIata})
+                {lane.stops.map((s) => ` › ${s.city || s.iata} (${s.iata})`).join('')}
+                {' '}→ {lane.destinationCity} ({lane.destinationIata}) • {lane.carrier} ({lane.mode})
               </p>
             </div>
           </div>
@@ -260,6 +262,35 @@ export const LaneRiskAssessmentModal: React.FC<LaneRiskAssessmentModalProps> = (
             </div>
 
           </div>
+
+          {/* Section: Multi-Stop Route Itinerary */}
+          {lane.stops.length > 0 && (
+            <div className="bg-slate-950/70 border border-slate-800 rounded-xl p-4">
+              <h3 className="text-sm font-bold text-slate-200 uppercase tracking-wider flex items-center gap-2 mb-3">
+                <Layers className="w-4 h-4 text-teal-400" />
+                Route Itinerary ({lane.stops.length + 1} legs)
+              </h3>
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="w-6 h-6 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 flex items-center justify-center font-bold flex-shrink-0">O</span>
+                  <span className="font-semibold text-slate-200">{lane.originCity} ({lane.originIata})</span>
+                  <span className="text-slate-500">Origin</span>
+                </div>
+                {lane.stops.map((s, i) => (
+                  <div key={s.id} className="flex items-center gap-2 text-xs pl-1">
+                    <span className="w-6 h-6 rounded-full bg-slate-800 text-slate-300 border border-slate-700 flex items-center justify-center font-bold flex-shrink-0">{i + 1}</span>
+                    <span className="font-semibold text-slate-200">{s.city || s.iata} ({s.iata})</span>
+                    <span className="text-slate-500">{s.stopType} • {s.plannedDwellHours}h dwell</span>
+                  </div>
+                ))}
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="w-6 h-6 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/40 flex items-center justify-center font-bold flex-shrink-0">D</span>
+                  <span className="font-semibold text-slate-200">{lane.destinationCity} ({lane.destinationIata})</span>
+                  <span className="text-slate-500">Destination</span>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Section: Composite Risk Category Matrix */}
           <div>

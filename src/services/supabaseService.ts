@@ -1,5 +1,14 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { TransportLane, AlertNotification, AuditLogEntry, SupabaseSettings, SupabaseUser, CloudSyncState } from '../types';
+import {
+  mapRowToLane,
+  mapLaneToRow,
+  mapRowToAlert,
+  mapAlertToRow,
+  mapRowToAuditLog,
+  mapAuditLogToRow,
+  mapRowToTemperatureReading,
+} from './supabaseMappers';
 
 const STORAGE_KEY_CONFIG = 'pharmatrack_supabase_config';
 const STORAGE_KEY_USER = 'pharmatrack_active_user';
@@ -120,6 +129,7 @@ create table if not exists public.transport_lanes (
   destination_country text not null,
   destination_lat numeric not null,
   destination_lng numeric not null,
+  stops jsonb not null default '[]'::jsonb,
   carrier text not null,
   mode text not null,
   product_name text not null,
@@ -142,6 +152,10 @@ create table if not exists public.transport_lanes (
   delay_hours numeric default 0,
   last_updated timestamp with time zone default timezone('utc'::text, now()) not null
 );
+
+-- 3b. Backfill the stops column for projects that already had transport_lanes created
+-- before multi-stop routing was added (create table if not exists won't add new columns).
+alter table public.transport_lanes add column if not exists stops jsonb not null default '[]'::jsonb;
 
 -- 4. Temperature Telemetry Log
 create table if not exists public.temperature_telemetry (
@@ -389,7 +403,9 @@ export async function testSupabaseConnection(
   }
 }
 
-// Sync state helper
+// Push local lanes/alerts/audit logs to Supabase. Each table is upserted independently so a
+// failure on one (e.g. RLS rejection, missing column) doesn't silently swallow the others —
+// the returned syncedTables counts and tableErrors reflect what was actually written.
 export async function syncDataToSupabase(
   lanes: TransportLane[],
   alerts: AlertNotification[],
@@ -402,83 +418,116 @@ export async function syncDataToSupabase(
     return {
       status: 'offline_cached',
       lastSyncedAt: timestamp,
-      syncedTables: {
-        lanes: lanes.length,
-        alerts: alerts.length,
-        auditLogs: auditLogs.length,
-      },
+      syncedTables: { lanes: 0, alerts: 0, auditLogs: 0 },
       errorMessage: 'Supabase URL/Key not configured. Operating in high-speed local browser caching mode.'
     };
   }
 
+  const tableErrors: NonNullable<CloudSyncState['tableErrors']> = {};
+  const syncedTables = { lanes: 0, alerts: 0, auditLogs: 0 };
+
   try {
-    // Attempt upserting lanes
-    const formattedLanes = lanes.map(l => ({
-      id: l.id,
-      lane_code: l.laneCode,
-      origin_city: l.originCity,
-      origin_iata: l.originIata,
-      origin_country: l.originCountry,
-      origin_lat: l.originCoords[0],
-      origin_lng: l.originCoords[1],
-      destination_city: l.destinationCity,
-      destination_iata: l.destinationIata,
-      destination_country: l.destinationCountry,
-      destination_lat: l.destinationCoords[0],
-      destination_lng: l.destinationCoords[1],
-      carrier: l.carrier,
-      mode: l.mode,
-      product_name: l.productName,
-      product_category: l.productCategory,
-      batch_number: l.batchNumber,
-      payload_value_usd: l.payloadValueUsd,
-      temp_range_type: l.tempRangeType,
-      temp_min: l.tempMin,
-      temp_max: l.tempMax,
-      current_temp: l.currentTemp,
-      mkt_temp: l.mktTemp,
-      gdp_compliance_rate: l.gdpComplianceRate,
-      gdp_status: l.gdpStatus,
-      risk_score: l.riskScore,
-      risk_level: l.riskLevel,
-      status: l.status,
-      transit_progress: l.transitProgress,
-      departure_time: l.departureTime,
-      eta: l.eta,
-      delay_hours: l.delayHours,
-      last_updated: timestamp
-    }));
-
-    const { error: lanesError } = await client
+    const { data: laneData, error: lanesError } = await client
       .from('transport_lanes')
-      .upsert(formattedLanes, { onConflict: 'id' });
-
+      .upsert(lanes.map(l => mapLaneToRow(l, timestamp)), { onConflict: 'id' })
+      .select('id');
     if (lanesError) {
+      tableErrors.lanes = lanesError.message;
       console.warn('Supabase lanes sync notice:', lanesError.message);
+    } else {
+      syncedTables.lanes = laneData?.length ?? lanes.length;
     }
-
-    return {
-      status: 'synced',
-      lastSyncedAt: timestamp,
-      syncedTables: {
-        lanes: lanes.length,
-        alerts: alerts.length,
-        auditLogs: auditLogs.length,
-      },
-      errorMessage: null
-    };
   } catch (err: any) {
-    return {
-      status: 'error',
-      lastSyncedAt: timestamp,
-      syncedTables: {
-        lanes: 0,
-        alerts: 0,
-        auditLogs: 0,
-      },
-      errorMessage: err?.message || 'Connection error during Supabase synchronization'
-    };
+    tableErrors.lanes = err?.message || 'Unknown error syncing lanes';
   }
+
+  try {
+    const { data: alertData, error: alertsError } = await client
+      .from('alert_notifications')
+      .upsert(alerts.map(mapAlertToRow), { onConflict: 'id' })
+      .select('id');
+    if (alertsError) {
+      tableErrors.alerts = alertsError.message;
+      console.warn('Supabase alerts sync notice:', alertsError.message);
+    } else {
+      syncedTables.alerts = alertData?.length ?? alerts.length;
+    }
+  } catch (err: any) {
+    tableErrors.alerts = err?.message || 'Unknown error syncing alerts';
+  }
+
+  try {
+    const { data: auditData, error: auditError } = await client
+      .from('audit_trail')
+      .upsert(auditLogs.map(mapAuditLogToRow), { onConflict: 'id' })
+      .select('id');
+    if (auditError) {
+      tableErrors.auditLogs = auditError.message;
+      console.warn('Supabase audit trail sync notice:', auditError.message);
+    } else {
+      syncedTables.auditLogs = auditData?.length ?? auditLogs.length;
+    }
+  } catch (err: any) {
+    tableErrors.auditLogs = err?.message || 'Unknown error syncing audit trail';
+  }
+
+  const errorCount = Object.keys(tableErrors).length;
+  const status: CloudSyncState['status'] = errorCount === 0 ? 'synced' : errorCount === 3 ? 'error' : 'partial';
+
+  return {
+    status,
+    lastSyncedAt: timestamp,
+    syncedTables,
+    tableErrors: errorCount > 0 ? tableErrors : undefined,
+    errorMessage: errorCount > 0
+      ? Object.entries(tableErrors).map(([table, msg]) => `${table}: ${msg}`).join(' | ')
+      : null,
+  };
 }
 
 export const syncAllToSupabase = syncDataToSupabase;
+
+// Read lanes, alerts, audit trail, and recent telemetry back from Supabase. Returns null
+// (rather than throwing) when there's no client configured or the core lanes table can't be
+// read, so callers can cleanly fall back to local demo data.
+export async function fetchAllFromSupabase(): Promise<{
+  lanes: TransportLane[];
+  alerts: AlertNotification[];
+  auditLogs: AuditLogEntry[];
+} | null> {
+  const client = getSupabaseClient();
+  if (!client) return null;
+
+  const { data: laneRows, error: lanesError } = await client.from('transport_lanes').select('*');
+  if (lanesError || !laneRows) {
+    console.warn('Supabase lane fetch notice:', lanesError?.message);
+    return null;
+  }
+
+  const [{ data: alertRows, error: alertsError }, { data: auditRows, error: auditError }, { data: telemetryRows, error: telemetryError }] =
+    await Promise.all([
+      client.from('alert_notifications').select('*'),
+      client.from('audit_trail').select('*'),
+      client.from('temperature_telemetry').select('*').order('timestamp', { ascending: true }),
+    ]);
+
+  if (alertsError) console.warn('Supabase alerts fetch notice:', alertsError.message);
+  if (auditError) console.warn('Supabase audit trail fetch notice:', auditError.message);
+  if (telemetryError) console.warn('Supabase telemetry fetch notice:', telemetryError.message);
+
+  const telemetryByLane = new Map<string, ReturnType<typeof mapRowToTemperatureReading>[]>();
+  for (const row of telemetryRows || []) {
+    const laneId = String(row.lane_id);
+    const list = telemetryByLane.get(laneId) || [];
+    list.push(mapRowToTemperatureReading(row));
+    telemetryByLane.set(laneId, list);
+  }
+
+  const lanes = laneRows.map((row: any) => mapRowToLane(row, (telemetryByLane.get(String(row.id)) || []).slice(-10)));
+  const alerts = (alertRows || []).map(mapRowToAlert);
+  const auditLogs = (auditRows || [])
+    .map(mapRowToAuditLog)
+    .sort((a, b) => (a.timestamp < b.timestamp ? 1 : -1));
+
+  return { lanes, alerts, auditLogs };
+}

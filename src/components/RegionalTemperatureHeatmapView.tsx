@@ -20,18 +20,12 @@ import {
 } from 'lucide-react';
 import { TransportLane, RegionalThermalHotspot, HeatmapConfig } from '../types';
 import { REGIONAL_THERMAL_HOTSPOTS, getThermalRiskColor } from '../data/temperatureRiskData';
+import { projectMercator as projectCoordinates, buildMultiStopPathD } from '../utils/routePath';
 
 interface RegionalTemperatureHeatmapViewProps {
   lanes: TransportLane[];
   selectedLaneId: string | null;
   onSelectLane: (lane: TransportLane) => void;
-}
-
-// Convert Lat/Lng to SVG coordinates
-function projectCoordinates(lat: number, lng: number): [number, number] {
-  const x = ((lng + 180) / 360) * 920 + 40;
-  const y = ((80 - lat) / 140) * 420 + 40;
-  return [Math.max(20, Math.min(980, x)), Math.max(20, Math.min(480, y))];
 }
 
 export const RegionalTemperatureHeatmapView: React.FC<RegionalTemperatureHeatmapViewProps> = ({
@@ -251,11 +245,12 @@ export const RegionalTemperatureHeatmapView: React.FC<RegionalTemperatureHeatmap
           {/* Active Lane Corridors overlay (Layer 3) */}
           {showLaneCorridors &&
             lanes.map((lane) => {
-              const [x1, y1] = projectCoordinates(lane.originCoords[0], lane.originCoords[1]);
-              const [x2, y2] = projectCoordinates(lane.destinationCoords[0], lane.destinationCoords[1]);
-              const midX = (x1 + x2) / 2;
-              const midY = Math.min(y1, y2) - Math.abs(x1 - x2) * 0.18;
-              const pathD = `M ${x1} ${y1} Q ${midX} ${midY} ${x2} ${y2}`;
+              const routePoints: [number, number][] = [
+                projectCoordinates(lane.originCoords[0], lane.originCoords[1]),
+                ...lane.stops.map((s) => projectCoordinates(s.coords[0], s.coords[1])),
+                projectCoordinates(lane.destinationCoords[0], lane.destinationCoords[1]),
+              ];
+              const pathD = buildMultiStopPathD(routePoints);
 
               const isSelected = selectedLaneId === lane.id;
 

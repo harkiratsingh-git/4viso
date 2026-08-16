@@ -233,15 +233,17 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
               {/* Sync Status Card */}
               {syncResult && (
                 <div className={`p-4 rounded-xl border ${
-                  syncResult.status === 'synced' 
-                    ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300' 
-                    : syncResult.status === 'offline_cached'
-                      ? 'bg-blue-500/10 border-blue-500/30 text-blue-300'
-                      : 'bg-rose-500/10 border-rose-500/30 text-rose-300'
+                  syncResult.status === 'synced'
+                    ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+                    : syncResult.status === 'partial'
+                      ? 'bg-amber-500/10 border-amber-500/30 text-amber-300'
+                      : syncResult.status === 'offline_cached'
+                        ? 'bg-blue-500/10 border-blue-500/30 text-blue-300'
+                        : 'bg-rose-500/10 border-rose-500/30 text-rose-300'
                 }`}>
                   <div className="font-bold mb-1 flex items-center justify-between">
                     <span>
-                      Sync Status: {syncResult.status === 'synced' ? 'Live Cloud Connected' : syncResult.status === 'offline_cached' ? 'Fast Local Persistence' : 'Sync Notice'}
+                      Sync Status: {syncResult.status === 'synced' ? 'Live Cloud Connected' : syncResult.status === 'partial' ? 'Partially Synced' : syncResult.status === 'offline_cached' ? 'Fast Local Persistence' : 'Sync Notice'}
                     </span>
                     <span className="text-[10px] font-mono opacity-80">{syncResult.lastSyncedAt ? new Date(syncResult.lastSyncedAt).toLocaleTimeString() : '--'}</span>
                   </div>
