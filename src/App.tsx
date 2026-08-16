@@ -23,6 +23,9 @@ import { WeatherDisruptions } from './components/WeatherDisruptions';
 import { FilterToolbar } from './components/FilterToolbar';
 import { LaneManagementTable } from './components/LaneManagementTable';
 import { LaneRiskAssessmentModal } from './components/LaneRiskAssessmentModal';
+import { ManageLaneStopsModal } from './components/ManageLaneStopsModal';
+import { EditLaneModal } from './components/EditLaneModal';
+import { CertificationIssue } from './utils/ports';
 import { TemperatureMonitoringSystem } from './components/TemperatureMonitoringSystem';
 import { NewLaneWizardModal } from './components/NewLaneWizardModal';
 import { RealTimeAlertsCenter } from './components/RealTimeAlertsCenter';
@@ -32,7 +35,7 @@ import { AutomatedReportingModal } from './components/AutomatedReportingModal';
 import { SupabaseSyncModal } from './components/SupabaseSyncModal';
 import { SettingsPage } from './components/SettingsPage';
 import { LoginPage } from './components/LoginPage';
-import { getActiveUser, setActiveUser as persistActiveUser, DEFAULT_SUPABASE_USER, fetchAllFromSupabase } from './services/supabaseService';
+import { getActiveUser, setActiveUser as persistActiveUser, DEFAULT_SUPABASE_USER, fetchAllFromSupabase, restoreSupabaseSession, signOutFromSupabase } from './services/supabaseService';
 import { 
   LayoutDashboard, 
   Layers, 
@@ -98,6 +101,8 @@ export default function App() {
   // Modal dialog states
   const [riskModalLane, setRiskModalLane] = useState<TransportLane | null>(null);
   const [tempModalLane, setTempModalLane] = useState<TransportLane | null>(null);
+  const [manageStopsLane, setManageStopsLane] = useState<TransportLane | null>(null);
+  const [editLaneLane, setEditLaneLane] = useState<TransportLane | null>(null);
   const [isNewLaneWizardOpen, setIsNewLaneWizardOpen] = useState<boolean>(false);
   const [isReportsModalOpen, setIsReportsModalOpen] = useState<boolean>(false);
   const [isAlertsCenterOpen, setIsAlertsCenterOpen] = useState<boolean>(false);
@@ -130,6 +135,26 @@ export default function App() {
         console.warn('Failed to load data from Supabase, using local demo dataset:', err);
         if (!cancelled) setDataSource('local');
       });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Restore a real, verified Supabase Auth session on load (if one exists), overriding the
+  // local demo persona default set above.
+  useEffect(() => {
+    let cancelled = false;
+
+    restoreSupabaseSession()
+      .then(user => {
+        if (cancelled || !user) return;
+        setCurrentUser(user);
+        persistActiveUser(user);
+        const matchingRole = USER_ROLES.find(r => r.title.toLowerCase().includes(user.role.toLowerCase().slice(0, 4)));
+        if (matchingRole) setActiveRole(matchingRole);
+      })
+      .catch(err => console.warn('Failed to restore Supabase session:', err));
 
     return () => {
       cancelled = true;
@@ -234,6 +259,7 @@ export default function App() {
   // Sign out current user and return to login screen
   const handleLogout = () => {
     appendAuditLog('AUTH', 'User Signed Out', 'SECURITY', `${currentUser?.name || activeRole.name} ended their authenticated session.`);
+    signOutFromSupabase().catch(() => {});
     persistActiveUser(DEFAULT_SUPABASE_USER);
     setCurrentUser(DEFAULT_SUPABASE_USER);
     setActiveRole(USER_ROLES[0]);
@@ -274,6 +300,66 @@ export default function App() {
         `Risk Factor Logged: ${newRisk.title}`,
         'RISK_OVERRIDE',
         `Logged risk under ${newRisk.category} with severity ${newRisk.severity}.`
+      );
+    }
+  };
+
+  // Update a lane's intermediate stops from the Manage Route page
+  const handleUpdateLaneStops = (laneId: string, stops: TransportLane['stops']) => {
+    setLanes(prev => prev.map(l => (l.id === laneId ? { ...l, stops } : l)));
+
+    const targetLane = lanes.find(l => l.id === laneId);
+    if (targetLane) {
+      appendAuditLog(
+        targetLane.laneCode,
+        'Route Stops Updated',
+        'LANE_CONFIGURATION',
+        `Route for ${targetLane.laneCode} now has ${stops.length} intermediate stop${stops.length === 1 ? '' : 's'}.`
+      );
+    }
+  };
+
+  // Full lane edit (emergency reroute, carrier/cargo change, etc.) from the Edit Lane page
+  const handleUpdateLane = (
+    laneId: string,
+    updates: Parameters<React.ComponentProps<typeof EditLaneModal>['onSave']>[1],
+    certificationIssues: CertificationIssue[]
+  ) => {
+    setLanes(prev => prev.map(l => (l.id === laneId ? { ...l, ...updates } : l)));
+
+    const targetLane = lanes.find(l => l.id === laneId);
+    const laneCode = targetLane?.laneCode || updates.originIata + '-' + updates.destinationIata;
+
+    appendAuditLog(
+      laneCode,
+      'Lane Rerouted / Updated',
+      'LANE_CONFIGURATION',
+      `Route updated to ${updates.originIata} → ${updates.stops.map(s => s.iata).join(' → ')}${updates.stops.length ? ' → ' : ''}${updates.destinationIata} via ${updates.mode} (${updates.carrier}).`
+    );
+
+    if (certificationIssues.length > 0 && targetLane) {
+      const newAlert: AlertNotification = {
+        id: `alt-${Date.now()}`,
+        laneId,
+        laneCode,
+        route: `${updates.originCity} → ${updates.destinationCity}`,
+        timestamp: new Date().toISOString().replace('T', ' ').slice(0, 19) + ' UTC',
+        type: 'GDP_BREACH',
+        severity: 'Warning',
+        title: `Route Certification Gap in ${laneCode}`,
+        message: certificationIssues.map(i => i.issue).join(' '),
+        currentValue: `${certificationIssues.length} issue${certificationIssues.length > 1 ? 's' : ''}`,
+        thresholdValue: 'GDP certification + cold storage required',
+        isAcknowledged: false,
+        capaRequired: true,
+        capaId: `CAPA-2026-${Math.floor(100 + Math.random() * 899)}`,
+      };
+      setAlerts(prev => [newAlert, ...prev]);
+      appendAuditLog(
+        laneCode,
+        'Route Certification Alert Raised',
+        'GDP_AUDIT',
+        certificationIssues.map(i => i.issue).join(' ')
       );
     }
   };
@@ -575,6 +661,8 @@ export default function App() {
               onSelectLane={(lane) => setRiskModalLane(lane)}
               onOpenTempMonitor={(lane) => setTempModalLane(lane)}
               onOpenNewLaneWizard={() => setIsNewLaneWizardOpen(true)}
+              onManageStops={(lane) => setManageStopsLane(lane)}
+              onEditLane={(lane) => setEditLaneLane(lane)}
             />
           </div>
         )}
@@ -603,6 +691,8 @@ export default function App() {
               onSelectLane={(lane) => setRiskModalLane(lane)}
               onOpenTempMonitor={(lane) => setTempModalLane(lane)}
               onOpenNewLaneWizard={() => setIsNewLaneWizardOpen(true)}
+              onManageStops={(lane) => setManageStopsLane(lane)}
+              onEditLane={(lane) => setEditLaneLane(lane)}
             />
           </div>
         )}
@@ -658,7 +748,33 @@ export default function App() {
             setRiskModalLane(null);
             setTempModalLane(l);
           }}
+          onManageStops={(l) => {
+            setRiskModalLane(null);
+            setManageStopsLane(l);
+          }}
+          onEditLane={(l) => {
+            setRiskModalLane(null);
+            setEditLaneLane(l);
+          }}
           onAddRiskFactor={handleAddRiskFactor}
+        />
+      )}
+
+      {/* MODAL: Manage Route Stops (dedicated page for editing a lane's intermediate stops) */}
+      {manageStopsLane && (
+        <ManageLaneStopsModal
+          lane={lanes.find(l => l.id === manageStopsLane.id) || manageStopsLane}
+          onClose={() => setManageStopsLane(null)}
+          onSave={handleUpdateLaneStops}
+        />
+      )}
+
+      {/* MODAL: Edit Lane (emergency reroute, carrier/cargo/temp range changes) */}
+      {editLaneLane && (
+        <EditLaneModal
+          lane={lanes.find(l => l.id === editLaneLane.id) || editLaneLane}
+          onClose={() => setEditLaneLane(null)}
+          onSave={handleUpdateLane}
         />
       )}
 

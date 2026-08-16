@@ -14,7 +14,9 @@ import {
   TrendingUp,
   Activity,
   PlusCircle,
-  Eye
+  Eye,
+  Route as RouteIcon,
+  Pencil
 } from 'lucide-react';
 import { TransportLane, TransportMode } from '../types';
 import { getRiskColor, getStatusColor, getGdpBadge, formatCurrency } from '../utils/formatters';
@@ -25,6 +27,8 @@ interface LaneManagementTableProps {
   onSelectLane: (lane: TransportLane) => void;
   onOpenTempMonitor: (lane: TransportLane) => void;
   onOpenNewLaneWizard: () => void;
+  onManageStops: (lane: TransportLane) => void;
+  onEditLane: (lane: TransportLane) => void;
 }
 
 export const LaneManagementTable: React.FC<LaneManagementTableProps> = ({
@@ -33,6 +37,8 @@ export const LaneManagementTable: React.FC<LaneManagementTableProps> = ({
   onSelectLane,
   onOpenTempMonitor,
   onOpenNewLaneWizard,
+  onManageStops,
+  onEditLane,
 }) => {
   const [activeTab, setActiveTab] = useState<'ALL' | TransportMode>('ALL');
 
@@ -327,6 +333,20 @@ export const LaneManagementTable: React.FC<LaneManagementTableProps> = ({
                         >
                           <Eye className="w-3.5 h-3.5" />
                           <span>Assess Risks</span>
+                        </button>
+                        <button
+                          onClick={() => onEditLane(lane)}
+                          className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition-colors"
+                          title="Edit Lane (reroute, carrier, cargo)"
+                        >
+                          <Pencil className="w-3.5 h-3.5 text-amber-400" />
+                        </button>
+                        <button
+                          onClick={() => onManageStops(lane)}
+                          className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition-colors"
+                          title="Manage Route Stops"
+                        >
+                          <RouteIcon className="w-3.5 h-3.5 text-purple-400" />
                         </button>
                         <button
                           onClick={() => onOpenTempMonitor(lane)}

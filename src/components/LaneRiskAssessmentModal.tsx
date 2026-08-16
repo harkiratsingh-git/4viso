@@ -17,7 +17,9 @@ import {
   RotateCw, 
   Layers,
   ArrowRight,
-  Info
+  Info,
+  Route as RouteIcon,
+  Pencil
 } from 'lucide-react';
 import { TransportLane, RiskFactor, RiskLevel } from '../types';
 import { getRiskColor, getStatusColor, formatCurrency } from '../utils/formatters';
@@ -26,6 +28,8 @@ interface LaneRiskAssessmentModalProps {
   lane: TransportLane;
   onClose: () => void;
   onOpenTempMonitor: (lane: TransportLane) => void;
+  onManageStops: (lane: TransportLane) => void;
+  onEditLane: (lane: TransportLane) => void;
   onAddRiskFactor: (laneId: string, risk: RiskFactor) => void;
 }
 
@@ -33,6 +37,8 @@ export const LaneRiskAssessmentModal: React.FC<LaneRiskAssessmentModalProps> = (
   lane,
   onClose,
   onOpenTempMonitor,
+  onManageStops,
+  onEditLane,
   onAddRiskFactor,
 }) => {
   const [selectedRiskCategory, setSelectedRiskCategory] = useState<string>('All');
@@ -178,6 +184,13 @@ export const LaneRiskAssessmentModal: React.FC<LaneRiskAssessmentModalProps> = (
 
           <div className="flex items-center gap-2">
             <button
+              onClick={() => onEditLane(lane)}
+              className="px-3 py-1.5 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 text-xs font-semibold flex items-center gap-1.5 transition-all"
+            >
+              <Pencil className="w-4 h-4 text-amber-400" />
+              <span>Edit Lane</span>
+            </button>
+            <button
               onClick={() => onOpenTempMonitor(lane)}
               className="px-3 py-1.5 rounded-lg bg-teal-500/15 hover:bg-teal-500/25 text-teal-300 border border-teal-500/30 text-xs font-semibold flex items-center gap-1.5 transition-all"
             >
@@ -264,13 +277,24 @@ export const LaneRiskAssessmentModal: React.FC<LaneRiskAssessmentModalProps> = (
           </div>
 
           {/* Section: Multi-Stop Route Itinerary */}
-          {lane.stops.length > 0 && (
-            <div className="bg-slate-950/70 border border-slate-800 rounded-xl p-4">
-              <h3 className="text-sm font-bold text-slate-200 uppercase tracking-wider flex items-center gap-2 mb-3">
+          <div className="bg-slate-950/70 border border-slate-800 rounded-xl p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-bold text-slate-200 uppercase tracking-wider flex items-center gap-2">
                 <Layers className="w-4 h-4 text-teal-400" />
                 Route Itinerary ({lane.stops.length + 1} legs)
               </h3>
-              <div className="flex flex-col gap-2">
+              <button
+                onClick={() => onManageStops(lane)}
+                className="px-2.5 py-1.5 rounded-lg bg-purple-500/15 hover:bg-purple-500/25 text-purple-300 border border-purple-500/30 text-[11px] font-semibold flex items-center gap-1.5 transition-all"
+              >
+                <RouteIcon className="w-3.5 h-3.5" />
+                <span>{lane.stops.length > 0 ? 'Manage Stops' : 'Add Stops'}</span>
+              </button>
+            </div>
+            {lane.stops.length === 0 && (
+              <p className="text-[11px] text-slate-500 mb-2">Direct route — no intermediate stops yet.</p>
+            )}
+            <div className="flex flex-col gap-2">
                 <div className="flex items-center gap-2 text-xs">
                   <span className="w-6 h-6 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 flex items-center justify-center font-bold flex-shrink-0">O</span>
                   <span className="font-semibold text-slate-200">{lane.originCity} ({lane.originIata})</span>
@@ -290,7 +314,6 @@ export const LaneRiskAssessmentModal: React.FC<LaneRiskAssessmentModalProps> = (
                 </div>
               </div>
             </div>
-          )}
 
           {/* Section: Composite Risk Category Matrix */}
           <div>

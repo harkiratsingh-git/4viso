@@ -1,22 +1,14 @@
 import React, { useState } from 'react';
-import { 
-  Globe2, 
-  Layers, 
-  Flame, 
-  MapPin, 
-  Plane, 
-  Ship, 
-  Truck, 
-  AlertTriangle,
-  Info,
-  Compass,
-  Sparkles,
+import {
+  Globe2,
+  Layers,
+  Flame,
   Map as MapIcon
 } from 'lucide-react';
 import { TransportLane } from '../types';
 import { RegionalTemperatureHeatmapView } from './RegionalTemperatureHeatmapView';
 import { GoogleMapsNetworkView } from './GoogleMapsNetworkView';
-import { projectMercator, buildMultiStopPathD, pointOnMultiStopPath } from '../utils/routePath';
+import { WorldRouteMap } from './WorldRouteMap';
 
 interface GlobalNetworkMapProps {
   lanes: TransportLane[];
@@ -32,7 +24,6 @@ export const GlobalNetworkMap: React.FC<GlobalNetworkMapProps> = ({
   onOpenGoogleMapsConfig
 }) => {
   const [activeSubView, setActiveSubView] = useState<'CORRIDORS' | 'HEATMAP' | 'GOOGLE_MAPS'>('HEATMAP');
-  const [hoveredLane, setHoveredLane] = useState<TransportLane | null>(null);
   const [filterMode, setFilterMode] = useState<'ALL' | 'AIR' | 'SEA' | 'ROAD' | 'ALERTS'>('ALL');
 
   const visibleLanes = lanes.filter(l => {
@@ -88,7 +79,7 @@ export const GlobalNetworkMap: React.FC<GlobalNetworkMapProps> = ({
             }`}
           >
             <Layers className="w-3.5 h-3.5 text-teal-400" />
-            Global Corridors & Telemetry
+            World Map
           </button>
 
           <button
@@ -125,7 +116,7 @@ export const GlobalNetworkMap: React.FC<GlobalNetworkMapProps> = ({
         />
       )}
 
-      {/* SUB-VIEW 3: TACTICAL SVG CORRIDORS & FLIGHT ARCS */}
+      {/* SUB-VIEW 3: REAL-WORLD GEOGRAPHIC MAP */}
       {activeSubView === 'CORRIDORS' && (
         <div>
           {/* Mode Filters Bar */}
@@ -167,168 +158,7 @@ export const GlobalNetworkMap: React.FC<GlobalNetworkMapProps> = ({
             </div>
           </div>
 
-          <div className="relative w-full aspect-[2/1] min-h-[300px] max-h-[460px] bg-slate-950/90 rounded-lg border border-slate-800/80 overflow-hidden flex items-center justify-center">
-            <svg viewBox="0 0 1000 500" className="w-full h-full object-cover select-none">
-              <defs>
-                <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
-                  <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" strokeWidth="0.5" strokeOpacity="0.4" />
-                </pattern>
-                
-                <filter id="glow-emerald" x="-20%" y="-20%" width="140%" height="140%">
-                  <feGaussianBlur stdDeviation="3" result="blur" />
-                  <feComposite in="SourceGraphic" in2="blur" operator="over" />
-                </filter>
-                <filter id="glow-rose" x="-20%" y="-20%" width="140%" height="140%">
-                  <feGaussianBlur stdDeviation="4" result="blur" />
-                  <feComposite in="SourceGraphic" in2="blur" operator="over" />
-                </filter>
-              </defs>
-
-              <rect width="1000" height="500" fill="#090e17" />
-              <rect width="1000" height="500" fill="url(#grid)" />
-
-              {/* Continents */}
-              <g fill="#132032" stroke="#1e324a" strokeWidth="0.8" opacity="0.6">
-                <path d="M 120 90 Q 200 80 260 110 T 320 160 Q 290 220 220 250 T 170 230 Q 140 180 120 90 Z" />
-                <path d="M 270 270 Q 340 290 320 380 T 260 460 Q 240 400 250 320 Z" />
-                <path d="M 460 100 Q 550 90 560 140 T 490 200 Q 450 180 460 100 Z" />
-                <path d="M 470 210 Q 560 210 570 300 T 520 420 Q 460 380 450 280 Z" />
-                <path d="M 570 90 Q 750 80 840 140 T 800 280 Q 680 260 620 200 Z" />
-                <path d="M 770 340 Q 860 330 870 400 T 780 430 Q 750 380 770 340 Z" />
-              </g>
-
-              {/* Weather Hazard Disruption Zones */}
-              <ellipse cx="360" cy="140" rx="45" ry="25" fill="#f43f5e" fillOpacity="0.08" stroke="#f43f5e" strokeDasharray="3,3" strokeWidth="1">
-                <animate attributeName="opacity" values="0.3;0.8;0.3" dur="3s" repeatCount="indefinite" />
-              </ellipse>
-              <text x="360" y="143" fill="#fda4af" fontSize="9" textAnchor="middle" fontWeight="bold">⚠️ Cyclone Alert</text>
-
-              <ellipse cx="780" cy="205" rx="35" ry="20" fill="#f59e0b" fillOpacity="0.08" stroke="#f59e0b" strokeDasharray="3,3" strokeWidth="1">
-                <animate attributeName="opacity" values="0.4;0.9;0.4" dur="2.5s" repeatCount="indefinite" />
-              </ellipse>
-              <text x="780" y="208" fill="#fde68a" fontSize="8" textAnchor="middle" fontWeight="bold">Port Delay +48h</text>
-
-              {/* Route Arcs (through any intermediate stops) */}
-              {visibleLanes.map((lane) => {
-                const routePoints: [number, number][] = [
-                  projectMercator(lane.originCoords[0], lane.originCoords[1]),
-                  ...lane.stops.map((s) => projectMercator(s.coords[0], s.coords[1])),
-                  projectMercator(lane.destinationCoords[0], lane.destinationCoords[1]),
-                ];
-                const [x1, y1] = routePoints[0];
-                const [x2, y2] = routePoints[routePoints.length - 1];
-
-                const isSelected = selectedLaneId === lane.id;
-                const isCritical = lane.status === 'Temperature Alert' || lane.riskScore >= 50;
-                const isWarning = lane.riskScore >= 30 || lane.status === 'Delayed';
-
-                const pathD = buildMultiStopPathD(routePoints);
-                const [curX, curY] = pointOnMultiStopPath(routePoints, lane.transitProgress);
-
-                const strokeColor = isCritical ? '#f43f5e' : isWarning ? '#f59e0b' : '#10b981';
-
-                return (
-                  <g key={lane.id} className="cursor-pointer" onClick={() => onSelectLane(lane)}>
-                    <path
-                      d={pathD}
-                      fill="none"
-                      stroke="transparent"
-                      strokeWidth="20"
-                      onMouseEnter={() => setHoveredLane(lane)}
-                      onMouseLeave={() => setHoveredLane(null)}
-                    />
-
-                    <path
-                      d={pathD}
-                      fill="none"
-                      stroke={strokeColor}
-                      strokeWidth={isSelected ? 3.5 : 2}
-                      strokeOpacity={isSelected ? 1 : 0.75}
-                      strokeDasharray={lane.mode === 'Sea' ? '4,4' : undefined}
-                      filter={isSelected || isCritical ? (isCritical ? 'url(#glow-rose)' : 'url(#glow-emerald)') : undefined}
-                    />
-
-                    <circle cx={x1} cy={y1} r={isSelected ? 4.5 : 3.5} fill="#38bdf8" stroke="#0f172a" strokeWidth="1" />
-                    <text x={x1} y={y1 - 6} fill="#94a3b8" fontSize="8" textAnchor="middle" fontWeight="bold">
-                      {lane.originIata}
-                    </text>
-
-                    {lane.stops.map((s) => {
-                      const [sx, sy] = projectMercator(s.coords[0], s.coords[1]);
-                      return (
-                        <g key={s.id}>
-                          <circle cx={sx} cy={sy} r={isSelected ? 3.5 : 2.5} fill="#f8fafc" stroke="#0f172a" strokeWidth="1" />
-                          <text x={sx} y={sy - 5} fill="#cbd5e1" fontSize="7" textAnchor="middle" fontWeight="bold">
-                            {s.iata}
-                          </text>
-                        </g>
-                      );
-                    })}
-
-                    <circle cx={x2} cy={y2} r={isSelected ? 4.5 : 3.5} fill="#a855f7" stroke="#0f172a" strokeWidth="1" />
-                    <text x={x2} y={y2 - 6} fill="#94a3b8" fontSize="8" textAnchor="middle" fontWeight="bold">
-                      {lane.destinationIata}
-                    </text>
-
-                    <g transform={`translate(${curX}, ${curY})`}>
-                      <circle
-                        r={isSelected ? 7 : 5}
-                        fill={strokeColor}
-                        stroke="#ffffff"
-                        strokeWidth="1.5"
-                        className="animate-pulse"
-                      />
-                      {isCritical && (
-                        <circle r="11" fill="none" stroke="#f43f5e" strokeWidth="1.5" opacity="0.8">
-                          <animate attributeName="r" values="6;16;6" dur="1.8s" repeatCount="indefinite" />
-                          <animate attributeName="opacity" values="0.9;0;0.9" dur="1.8s" repeatCount="indefinite" />
-                        </circle>
-                      )}
-                    </g>
-                  </g>
-                );
-              })}
-            </svg>
-
-            {/* Hovered Lane Quick-Info Popup */}
-            {(hoveredLane || (selectedLaneId && lanes.find(l => l.id === selectedLaneId))) && (
-              <div className="absolute bottom-3 left-3 bg-slate-900/95 border border-slate-700 p-3 rounded-lg shadow-xl backdrop-blur-md max-w-xs text-xs text-slate-200 z-10 transition-all pointer-events-none">
-                {(() => {
-                  const active = hoveredLane || lanes.find(l => l.id === selectedLaneId)!;
-                  return (
-                    <div>
-                      <div className="flex items-center justify-between gap-2 border-b border-slate-800 pb-1.5 mb-1.5">
-                        <span className="font-bold text-white text-sm flex items-center gap-1.5">
-                          {active.laneCode}
-                          <span className="text-[10px] px-1.5 py-0.2 rounded bg-slate-800 text-slate-300">
-                            {active.mode}
-                          </span>
-                        </span>
-                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                          active.riskScore >= 50 ? 'bg-rose-500/20 text-rose-300' : active.riskScore >= 25 ? 'bg-amber-500/20 text-amber-300' : 'bg-emerald-500/20 text-emerald-300'
-                        }`}>
-                          Risk {active.riskScore}%
-                        </span>
-                      </div>
-                      <div className="text-slate-300 font-medium">
-                        {active.originCity} ({active.originIata})
-                        {active.stops.map((s) => ` → ${s.iata}`).join('')}
-                        {' '}→ {active.destinationCity} ({active.destinationIata})
-                      </div>
-                      <div className="text-slate-400 text-[11px] mt-0.5">
-                        {active.carrier} • {active.productName}
-                        {active.stops.length > 0 && ` • ${active.stops.length} stop${active.stops.length > 1 ? 's' : ''}`}
-                      </div>
-                      <div className="mt-2 flex items-center justify-between text-[11px] pt-1.5 border-t border-slate-800">
-                        <span>Temp: <strong className={active.currentTemp > active.tempMax || active.currentTemp < active.tempMin ? 'text-rose-400' : 'text-emerald-400'}>{active.currentTemp}°C</strong></span>
-                        <span>Progress: <strong>{active.transitProgress}%</strong></span>
-                      </div>
-                    </div>
-                  );
-                })()}
-              </div>
-            )}
-          </div>
+          <WorldRouteMap lanes={visibleLanes} selectedLaneId={selectedLaneId} onSelectLane={onSelectLane} />
         </div>
       )}
 

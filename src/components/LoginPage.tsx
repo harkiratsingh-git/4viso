@@ -21,9 +21,10 @@ import {
   Database
 } from 'lucide-react';
 import { SupabaseUser, UserRole } from '../types';
+import { signInWithEmail, signUpWithEmail, sendPasswordReset } from '../services/supabaseService';
 
 interface LoginPageProps {
-  onLoginSuccess: (user: SupabaseUser, role: UserRole) => void;
+  onLoginSuccess: (user: SupabaseUser, role?: UserRole) => void;
   onCancel?: () => void;
   currentUser?: SupabaseUser | null;
 }
@@ -123,25 +124,28 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   currentUser
 }) => {
   const [authMode, setAuthMode] = useState<'LOGIN' | 'REGISTER' | 'SSO'>('LOGIN');
-  const [email, setEmail] = useState<string>('elena.rostova@biopharma-coldchain.com');
-  const [password, setPassword] = useState<string>('BioPharma2026!QA');
+  const [email, setEmail] = useState<string>('');
+  const [password, setPassword] = useState<string>('');
   const [showPassword, setShowPassword] = useState<boolean>(false);
   const [fullName, setFullName] = useState<string>('');
   const [selectedRole, setSelectedRole] = useState<SupabaseUser['role']>('Quality Lead');
-  const [organization, setOrganization] = useState<string>('Global BioPharma Corp');
+  const [organization, setOrganization] = useState<string>('');
   const [rememberMe, setRememberMe] = useState<boolean>(true);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const [needsEmailConfirmation, setNeedsEmailConfirmation] = useState<boolean>(false);
   const [showForgotPassword, setShowForgotPassword] = useState<boolean>(false);
   const [resetEmail, setResetEmail] = useState<string>('');
   const [resetSent, setResetSent] = useState<boolean>(false);
+  const [resetError, setResetError] = useState<string | null>(null);
 
-  // Handle standard submit
-  const handleSubmit = (e: React.FormEvent) => {
+  // Real Supabase Auth submit — signInWithPassword for Sign In, auth.signUp for Register.
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
     setSuccessMsg(null);
+    setNeedsEmailConfirmation(false);
 
     if (!email || !email.includes('@')) {
       setErrorMsg('Please enter a valid work email address.');
@@ -155,63 +159,62 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
     setIsLoading(true);
 
-    setTimeout(() => {
+    if (authMode === 'LOGIN') {
+      const result = await signInWithEmail(email, password);
       setIsLoading(false);
 
-      if (authMode === 'LOGIN') {
-        // Find existing demo account or construct user
-        const matched = DEMO_ACCOUNTS.find(a => a.user.email.toLowerCase() === email.toLowerCase());
-        const userToLogin: SupabaseUser = matched ? matched.user : {
-          id: `usr-${Date.now()}`,
-          email,
-          name: email.split('@')[0].replace('.', ' ').replace(/\b\w/g, c => c.toUpperCase()),
-          role: selectedRole,
-          organization: 'BioPharma Enterprise Logistics',
-          createdAt: new Date().toISOString(),
-          avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&h=120&fit=crop&crop=faces'
-        };
-
-        const roleToAssign: UserRole = matched ? matched.role : {
-          id: selectedRole === 'Quality Lead' ? 'quality' : selectedRole === 'Logistics Director' ? 'logistics' : selectedRole === 'GDP Auditor' ? 'auditor' : 'executive',
-          title: selectedRole,
-          department: 'BioPharma Supply Chain Operations',
-          name: userToLogin.name
-        };
-
-        setSuccessMsg(`Authenticated successfully. Welcome back, ${userToLogin.name}!`);
-        setTimeout(() => {
-          onLoginSuccess(userToLogin, roleToAssign);
-        }, 600);
-      } else {
-        // Registration
-        if (!fullName.trim()) {
-          setErrorMsg('Full Name is required for 21 CFR Part 11 accountability.');
-          return;
-        }
-
-        const newUser: SupabaseUser = {
-          id: `usr-${Date.now()}`,
-          email,
-          name: fullName,
-          role: selectedRole,
-          organization: organization || 'BioPharma Solutions',
-          createdAt: new Date().toISOString(),
-          avatarUrl: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=120&h=120&fit=crop&crop=faces'
-        };
-
-        const newRole: UserRole = {
-          id: selectedRole === 'Quality Lead' ? 'quality' : selectedRole === 'Logistics Director' ? 'logistics' : selectedRole === 'GDP Auditor' ? 'auditor' : 'executive',
-          title: `${selectedRole} - ${organization}`,
-          department: 'Quality & Operations',
-          name: fullName
-        };
-
-        setSuccessMsg('Account registered and credentials validated. Redirecting to workspace...');
-        setTimeout(() => {
-          onLoginSuccess(newUser, newRole);
-        }, 800);
+      if (!result.success || !result.user) {
+        setErrorMsg(result.message);
+        return;
       }
-    }, 700);
+
+      setSuccessMsg(`Authenticated successfully. Welcome back, ${result.user.name}!`);
+      setTimeout(() => onLoginSuccess(result.user!), 500);
+    } else {
+      if (!fullName.trim()) {
+        setIsLoading(false);
+        setErrorMsg('Full Name is required for 21 CFR Part 11 accountability.');
+        return;
+      }
+
+      const result = await signUpWithEmail(email, password, {
+        fullName,
+        role: selectedRole,
+        organization: organization || 'Unassigned Organization',
+      });
+      setIsLoading(false);
+
+      if (!result.success) {
+        setErrorMsg(result.message);
+        return;
+      }
+
+      if (result.needsEmailConfirmation) {
+        setNeedsEmailConfirmation(true);
+        setSuccessMsg(result.message);
+        return;
+      }
+
+      setSuccessMsg(result.message);
+      if (result.user) {
+        setTimeout(() => onLoginSuccess(result.user!), 600);
+      }
+    }
+  };
+
+  const handleSendPasswordReset = async () => {
+    setResetError(null);
+    const target = resetEmail || email;
+    if (!target || !target.includes('@')) {
+      setResetError('Enter a valid email address first.');
+      return;
+    }
+    const result = await sendPasswordReset(target);
+    if (!result.success) {
+      setResetError(result.message);
+      return;
+    }
+    setResetSent(true);
   };
 
   // Quick 1-click login with demo persona
@@ -248,10 +251,10 @@ export const LoginPage: React.FC<LoginPageProps> = ({
             <div className="mb-6 bg-slate-900/80 border border-slate-800 rounded-xl p-3.5">
               <div className="flex items-center gap-2 text-xs font-bold text-teal-400 mb-1.5">
                 <Sparkles className="w-3.5 h-3.5" />
-                <span>1-Click Demo Persona Login</span>
+                <span>Explore Without an Account</span>
               </div>
               <p className="text-[11px] text-slate-400 mb-3">
-                Select any verified role below to sign in immediately without typing passwords:
+                These load a persona locally in your browser only — no Supabase account is created or signed into. For a real, verified sign-in use the form on the right.
               </p>
 
               <div className="space-y-2">
@@ -307,6 +310,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                   onClick={() => {
                     setAuthMode('LOGIN');
                     setErrorMsg(null);
+                    setNeedsEmailConfirmation(false);
                   }}
                   className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
                     authMode === 'LOGIN'
@@ -320,6 +324,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                   onClick={() => {
                     setAuthMode('REGISTER');
                     setErrorMsg(null);
+                    setNeedsEmailConfirmation(false);
                   }}
                   className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
                     authMode === 'REGISTER'
@@ -333,6 +338,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                   onClick={() => {
                     setAuthMode('SSO');
                     setErrorMsg(null);
+                    setNeedsEmailConfirmation(false);
                   }}
                   className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
                     authMode === 'SSO'
@@ -362,15 +368,34 @@ export const LoginPage: React.FC<LoginPageProps> = ({
               </div>
             )}
 
-            {successMsg && (
+            {successMsg && !needsEmailConfirmation && (
               <div className="mb-4 p-3 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs flex items-center gap-2">
                 <CheckCircle2 className="w-4 h-4 flex-shrink-0 text-emerald-400" />
                 <span>{successMsg}</span>
               </div>
             )}
 
+            {needsEmailConfirmation && (
+              <div className="mb-4 p-4 rounded-xl bg-teal-500/10 border border-teal-500/30 text-center">
+                <Mail className="w-8 h-8 text-teal-400 mx-auto mb-2" />
+                <div className="text-sm font-bold text-teal-200 mb-1">Confirm your email to finish signing up</div>
+                <p className="text-[11px] text-slate-400">{successMsg}</p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNeedsEmailConfirmation(false);
+                    setSuccessMsg(null);
+                    setAuthMode('LOGIN');
+                  }}
+                  className="mt-3 text-[11px] text-teal-400 hover:underline font-semibold"
+                >
+                  Back to Sign In
+                </button>
+              </div>
+            )}
+
             {/* FORM: STANDARD LOGIN / REGISTER */}
-            {(authMode === 'LOGIN' || authMode === 'REGISTER') && (
+            {(authMode === 'LOGIN' || authMode === 'REGISTER') && !needsEmailConfirmation && (
               <form onSubmit={handleSubmit} className="space-y-4">
                 {authMode === 'REGISTER' && (
                   <div>
@@ -515,35 +540,36 @@ export const LoginPage: React.FC<LoginPageProps> = ({
             {authMode === 'SSO' && (
               <div className="space-y-4 py-2">
                 <div className="text-xs text-slate-400 mb-3">
-                  Connect via your enterprise Identity Provider (IdP) for single sign-on:
+                  Enterprise single sign-on providers for this project:
                 </div>
 
                 <button
-                  onClick={() => handleQuickDemoLogin(DEMO_ACCOUNTS[0])}
-                  className="w-full py-2.5 px-4 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-700 text-xs font-semibold text-slate-200 transition-all flex items-center justify-center gap-2.5"
+                  disabled
+                  className="w-full py-2.5 px-4 rounded-xl bg-slate-950 border border-slate-800 text-xs font-semibold text-slate-500 flex items-center justify-center gap-2.5 cursor-not-allowed opacity-60"
                 >
-                  <Building2 className="w-4 h-4 text-blue-400" />
-                  <span>Sign in with Microsoft Azure AD / Entra ID</span>
+                  <Building2 className="w-4 h-4" />
+                  <span>Microsoft Azure AD / Entra ID</span>
                 </button>
 
                 <button
-                  onClick={() => handleQuickDemoLogin(DEMO_ACCOUNTS[1])}
-                  className="w-full py-2.5 px-4 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-700 text-xs font-semibold text-slate-200 transition-all flex items-center justify-center gap-2.5"
+                  disabled
+                  className="w-full py-2.5 px-4 rounded-xl bg-slate-950 border border-slate-800 text-xs font-semibold text-slate-500 flex items-center justify-center gap-2.5 cursor-not-allowed opacity-60"
                 >
-                  <ShieldCheck className="w-4 h-4 text-teal-400" />
-                  <span>Sign in with Okta Enterprise SSO</span>
+                  <ShieldCheck className="w-4 h-4" />
+                  <span>Okta Enterprise SSO</span>
                 </button>
 
                 <button
-                  onClick={() => handleQuickDemoLogin(DEMO_ACCOUNTS[2])}
-                  className="w-full py-2.5 px-4 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-700 text-xs font-semibold text-slate-200 transition-all flex items-center justify-center gap-2.5"
+                  disabled
+                  className="w-full py-2.5 px-4 rounded-xl bg-slate-950 border border-slate-800 text-xs font-semibold text-slate-500 flex items-center justify-center gap-2.5 cursor-not-allowed opacity-60"
                 >
-                  <Fingerprint className="w-4 h-4 text-emerald-400" />
-                  <span>Sign in with Google Workspace SAML</span>
+                  <Fingerprint className="w-4 h-4" />
+                  <span>Google Workspace SAML</span>
                 </button>
 
-                <div className="p-3 rounded-lg bg-slate-950 border border-slate-800 text-[11px] text-slate-400">
-                  SSO enforces automatic SAML 2.0 / OpenID Connect profile provisioning directly into Supabase <code className="text-teal-400">auth.users</code> and <code className="text-teal-400">user_profiles</code>.
+                <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-300 flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                  <span>No SSO provider is enabled on this Supabase project yet. Enable one under Authentication → Providers, then these buttons can be wired to <code className="text-amber-200">supabase.auth.signInWithOAuth()</code>. Use email Sign In / Register for now.</span>
                 </div>
               </div>
             )}
@@ -565,13 +591,20 @@ export const LoginPage: React.FC<LoginPageProps> = ({
               Reset Security Password
             </h3>
             <p className="text-xs text-slate-400 mb-4">
-              Enter your verified email to receive a 21 CFR Part 11 security reset link and OTP token.
+              Enter your account email — Supabase will send a secure password reset link to it.
             </p>
+
+            {resetError && (
+              <div className="p-3 rounded-lg bg-rose-500/15 border border-rose-500/30 text-rose-300 text-xs mb-4 flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                <span>{resetError}</span>
+              </div>
+            )}
 
             {resetSent ? (
               <div className="p-3 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs mb-4 flex items-center gap-2">
                 <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                <span>Reset token sent! Check your inbox for temporary OTP verification.</span>
+                <span>Reset link sent to {resetEmail || email}. Check your inbox.</span>
               </div>
             ) : (
               <div className="mb-4">
@@ -594,6 +627,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                 onClick={() => {
                   setShowForgotPassword(false);
                   setResetSent(false);
+                  setResetError(null);
                 }}
                 className="px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-400 hover:text-slate-200"
               >
@@ -602,10 +636,10 @@ export const LoginPage: React.FC<LoginPageProps> = ({
               {!resetSent && (
                 <button
                   type="button"
-                  onClick={() => setResetSent(true)}
+                  onClick={handleSendPasswordReset}
                   className="px-4 py-1.5 rounded-lg text-xs font-bold bg-teal-500 text-slate-950 hover:bg-teal-400 transition-colors"
                 >
-                  Send OTP Token
+                  Send Reset Link
                 </button>
               )}
             </div>

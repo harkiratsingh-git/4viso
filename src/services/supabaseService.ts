@@ -9,6 +9,7 @@ import {
   mapAuditLogToRow,
   mapRowToTemperatureReading,
 } from './supabaseMappers';
+import { PortEntry, mapPortsRowToEntry } from '../utils/ports';
 
 const STORAGE_KEY_CONFIG = 'pharmatrack_supabase_config';
 const STORAGE_KEY_USER = 'pharmatrack_active_user';
@@ -530,4 +531,149 @@ export async function fetchAllFromSupabase(): Promise<{
     .sort((a, b) => (a.timestamp < b.timestamp ? 1 : -1));
 
   return { lanes, alerts, auditLogs };
+}
+
+// ---------------------------------------------------------------------------
+// Real Supabase Auth (email/password) — this is the actual security boundary.
+// user_profiles is just a display-data table the app reads/writes best-effort;
+// the auth.users record created by supabase.auth.* is what's authoritative.
+// ---------------------------------------------------------------------------
+
+async function fetchProfileRow(client: SupabaseClient, id: string, email: string): Promise<any | null> {
+  const byId = await client.from('user_profiles').select('*').eq('id', id).maybeSingle();
+  if (byId.data) return byId.data;
+  const byEmail = await client.from('user_profiles').select('*').eq('email', email).maybeSingle();
+  return byEmail.data || null;
+}
+
+function buildUserFromAuth(authUser: { id: string; email?: string | null; created_at?: string; user_metadata?: any }, profileRow: any | null): SupabaseUser {
+  const email = authUser.email || profileRow?.email || '';
+  const meta = authUser.user_metadata || {};
+  return {
+    id: authUser.id,
+    email,
+    name: profileRow?.full_name || meta.full_name || email.split('@')[0],
+    role: (profileRow?.role || meta.role || 'Supply Chain Analyst') as SupabaseUser['role'],
+    organization: profileRow?.organization || meta.organization || 'Unassigned Organization',
+    createdAt: authUser.created_at || new Date().toISOString(),
+    avatarUrl: profileRow?.avatar_url || undefined,
+    authProvider: 'Supabase Cloud Auth',
+  };
+}
+
+export interface AuthResult {
+  success: boolean;
+  message: string;
+  needsEmailConfirmation?: boolean;
+  user?: SupabaseUser;
+}
+
+export async function signUpWithEmail(
+  email: string,
+  password: string,
+  profile: { fullName: string; role: SupabaseUser['role']; organization: string }
+): Promise<AuthResult> {
+  const client = getSupabaseClient();
+  if (!client) return { success: false, message: 'Supabase is not configured. Add your project URL and anon key in Settings.' };
+
+  const { data, error } = await client.auth.signUp({
+    email,
+    password,
+    options: {
+      data: { full_name: profile.fullName, role: profile.role, organization: profile.organization },
+    },
+  });
+
+  if (error) return { success: false, message: error.message };
+  if (!data.user) return { success: false, message: 'Registration failed for an unknown reason.' };
+
+  const needsEmailConfirmation = !data.session;
+
+  // Best-effort mirror into user_profiles so the rest of the app (which only reads that
+  // table) can see this person. Never block the auth result on this succeeding.
+  try {
+    await client.from('user_profiles').upsert(
+      {
+        id: data.user.id,
+        email,
+        full_name: profile.fullName,
+        role: profile.role,
+        organization: profile.organization,
+      },
+      { onConflict: 'id' }
+    );
+  } catch {
+    // non-fatal
+  }
+
+  return {
+    success: true,
+    needsEmailConfirmation,
+    message: needsEmailConfirmation
+      ? `Account created for ${email}. Check your inbox for a confirmation link before signing in.`
+      : 'Account created and signed in.',
+    user: buildUserFromAuth(data.user, null),
+  };
+}
+
+export async function signInWithEmail(email: string, password: string): Promise<AuthResult> {
+  const client = getSupabaseClient();
+  if (!client) return { success: false, message: 'Supabase is not configured. Add your project URL and anon key in Settings.' };
+
+  const { data, error } = await client.auth.signInWithPassword({ email, password });
+  if (error) return { success: false, message: error.message };
+  if (!data.user) return { success: false, message: 'Sign-in failed for an unknown reason.' };
+
+  const profileRow = await fetchProfileRow(client, data.user.id, email).catch(() => null);
+  return { success: true, message: 'Signed in.', user: buildUserFromAuth(data.user, profileRow) };
+}
+
+export async function signOutFromSupabase(): Promise<void> {
+  const client = getSupabaseClient();
+  if (!client) return;
+  try {
+    await client.auth.signOut();
+  } catch {
+    // non-fatal — local session state is cleared by the caller regardless
+  }
+}
+
+export async function sendPasswordReset(email: string): Promise<AuthResult> {
+  const client = getSupabaseClient();
+  if (!client) return { success: false, message: 'Supabase is not configured.' };
+
+  const { error } = await client.auth.resetPasswordForEmail(email);
+  if (error) return { success: false, message: error.message };
+  return { success: true, message: `Password reset link sent to ${email}, if an account exists for that address.` };
+}
+
+/** Restores a signed-in Supabase Auth session on app load, if one exists. */
+export async function restoreSupabaseSession(): Promise<SupabaseUser | null> {
+  const client = getSupabaseClient();
+  if (!client) return null;
+
+  const { data } = await client.auth.getSession();
+  const authUser = data.session?.user;
+  if (!authUser) return null;
+
+  const profileRow = await fetchProfileRow(client, authUser.id, authUser.email || '').catch(() => null);
+  return buildUserFromAuth(authUser, profileRow);
+}
+
+/**
+ * Reads the real `ports` reference table from the connected Supabase project (GDP
+ * certification, cold storage, customs delay, and facility reliability data), used to
+ * ground the transport-mode/stop recommendations and route-legality checks in real data.
+ * Returns null (not an empty array) when unreachable, so callers can fall back cleanly.
+ */
+export async function fetchPortsFromSupabase(): Promise<PortEntry[] | null> {
+  const client = getSupabaseClient();
+  if (!client) return null;
+
+  const { data, error } = await client.from('ports').select('*');
+  if (error || !data) {
+    console.warn('Supabase ports fetch notice:', error?.message);
+    return null;
+  }
+  return data.map(mapPortsRowToEntry);
 }

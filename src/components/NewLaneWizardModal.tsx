@@ -8,39 +8,27 @@ import {
   Check,
   ArrowRight,
   ArrowLeft,
-  Thermometer,
-  Bell,
   ShieldCheck,
   ShieldAlert,
   AlertTriangle,
-  Clock,
-  Zap,
   Sparkles,
-  Plus,
   Trash2,
-  ChevronUp,
-  ChevronDown,
-  MapPin,
-  Route as RouteIcon,
 } from 'lucide-react';
 import { TransportLane, TransportMode, TemperatureRangeType, RiskFactor, RouteStop } from '../types';
 import { getAirportCoords } from '../utils/geo';
 import { assessRoute } from '../utils/riskAssessment';
+import { recommendTransportMode } from '../utils/ports';
 import { getRiskColor } from '../utils/formatters';
+import { AirportAutocomplete, AirportValue } from './AirportAutocomplete';
+import { RouteStopsEditor, DraftStop } from './RouteStopsEditor';
 
 interface NewLaneWizardModalProps {
   onClose: () => void;
   onCreateLane: (newLane: TransportLane) => void;
 }
 
-interface DraftStop {
-  id: string;
-  city: string;
-  iata: string;
-  country: string;
-  stopType: RouteStop['stopType'];
-  plannedDwellHours: number;
-}
+const defaultOrigin = (): AirportValue => ({ city: 'Frankfurt', iata: 'FRA', country: 'Germany', coords: getAirportCoords('FRA') });
+const defaultDestination = (): AirportValue => ({ city: 'Singapore', iata: 'SIN', country: 'Singapore', coords: getAirportCoords('SIN') });
 
 export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
   onClose,
@@ -52,12 +40,8 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
   const [mode, setMode] = useState<TransportMode>('Air');
 
   // Step 2: Route & Cargo
-  const [originCity, setOriginCity] = useState<string>('Frankfurt');
-  const [originIata, setOriginIata] = useState<string>('FRA');
-  const [originCountry, setOriginCountry] = useState<string>('Germany');
-  const [destCity, setDestCity] = useState<string>('Singapore');
-  const [destIata, setDestIata] = useState<string>('SIN');
-  const [destCountry, setDestCountry] = useState<string>('Singapore');
+  const [origin, setOrigin] = useState<AirportValue>(defaultOrigin());
+  const [destination, setDestination] = useState<AirportValue>(defaultDestination());
   const [stops, setStops] = useState<DraftStop[]>([]);
   const [carrier, setCarrier] = useState<string>('Lufthansa Cargo');
   const [productName, setProductName] = useState<string>('Lyophilized Biologics & Vaccines');
@@ -93,57 +77,29 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
     }
   };
 
-  // Multi-stop route management
-  const handleAddStop = () => {
-    setStops((prev) => [
-      ...prev,
-      {
-        id: `stop-${Date.now()}`,
-        city: '',
-        iata: '',
-        country: '',
-        stopType: 'Transit Hub',
-        plannedDwellHours: 2,
-      },
-    ]);
-  };
-
-  const handleUpdateStop = (id: string, patch: Partial<DraftStop>) => {
-    setStops((prev) => prev.map((s) => (s.id === id ? { ...s, ...patch } : s)));
-  };
-
-  const handleRemoveStop = (id: string) => {
-    setStops((prev) => prev.filter((s) => s.id !== id));
-  };
-
-  const handleMoveStop = (id: string, direction: -1 | 1) => {
-    setStops((prev) => {
-      const idx = prev.findIndex((s) => s.id === id);
-      const target = idx + direction;
-      if (idx === -1 || target < 0 || target >= prev.length) return prev;
-      const next = [...prev];
-      [next[idx], next[target]] = [next[target], next[idx]];
-      return next;
-    });
-  };
+  // Recommended transport mode for the drafted route + cargo (Step 2)
+  const modeRecommendation = useMemo(() => {
+    if (!origin.iata.trim() || !destination.iata.trim()) return null;
+    return recommendTransportMode(origin.coords, destination.coords, tempMin, tempMax, productCategory);
+  }, [origin, destination, tempMin, tempMax, productCategory]);
 
   // Live risk assessment of the drafted route (Step 3)
   const assessment = useMemo(() => {
-    if (!originIata.trim() || !destIata.trim()) return null;
+    if (!origin.iata.trim() || !destination.iata.trim()) return null;
     return assessRoute({
-      origin: { iata: originIata.toUpperCase(), coords: getAirportCoords(originIata), label: 'Origin' },
-      destination: { iata: destIata.toUpperCase(), coords: getAirportCoords(destIata), label: 'Destination' },
+      origin: { iata: origin.iata.toUpperCase(), coords: origin.coords, label: 'Origin' },
+      destination: { iata: destination.iata.toUpperCase(), coords: destination.coords, label: 'Destination' },
       stops: stops
         .filter((s) => s.iata.trim())
-        .map((s) => ({ iata: s.iata.toUpperCase(), coords: getAirportCoords(s.iata), label: s.city || s.iata })),
+        .map((s) => ({ iata: s.iata.toUpperCase(), coords: s.coords, label: s.city || s.iata })),
       mode,
       tempMin,
       tempMax,
     });
-  }, [originIata, destIata, stops, mode, tempMin, tempMax]);
+  }, [origin, destination, stops, mode, tempMin, tempMax]);
 
   const handleFinish = () => {
-    const laneCode = `${originIata.toUpperCase()}-${destIata.toUpperCase()}-${Math.floor(10 + Math.random() * 89)}`;
+    const laneCode = `${origin.iata.toUpperCase()}-${destination.iata.toUpperCase()}-${Math.floor(10 + Math.random() * 89)}`;
     const initTemp = Number(((tempMin + tempMax) / 2 + 0.2).toFixed(1));
 
     // Automated Composite Risk Calculation, blended with the live route risk assessment
@@ -163,7 +119,7 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
         city: s.city || s.iata.toUpperCase(),
         iata: s.iata.toUpperCase(),
         country: s.country,
-        coords: getAirportCoords(s.iata),
+        coords: s.coords,
         stopType: s.stopType,
         plannedDwellHours: s.plannedDwellHours,
       }));
@@ -172,7 +128,7 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
       {
         id: `r-${Date.now()}-1`,
         category: 'Handling Quality',
-        title: `${originIata} to ${destIata} Intermodal Ramp Handover`,
+        title: `${origin.iata} to ${destination.iata} Intermodal Ramp Handover`,
         description: 'Tarmac loading and transfer between cold warehouse and aircraft main deck.',
         severity: 'Low',
         score: 12,
@@ -216,14 +172,14 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
     const newLane: TransportLane = {
       id: `lane-${Date.now()}`,
       laneCode,
-      originCity,
-      originIata: originIata.toUpperCase(),
-      originCountry,
-      originCoords: getAirportCoords(originIata),
-      destinationCity: destCity,
-      destinationIata: destIata.toUpperCase(),
-      destinationCountry: destCountry,
-      destinationCoords: getAirportCoords(destIata),
+      originCity: origin.city,
+      originIata: origin.iata.toUpperCase(),
+      originCountry: origin.country,
+      originCoords: origin.coords,
+      destinationCity: destination.city,
+      destinationIata: destination.iata.toUpperCase(),
+      destinationCountry: destination.country,
+      destinationCoords: destination.coords,
       stops: routeStops,
       carrier,
       mode,
@@ -266,11 +222,13 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
     onClose();
   };
 
-  const stepLabels = ['1. Transport Mode', '2. Route & Cargo', '3. Risk Assessment', '4. Threshold Alerts'];
+  const stepLabels = ['1. Route & Cargo', '2. Mode', '3. Risk Check', '4. Alert Rules'];
+
+  const canAdvanceFromStep1 = origin.iata.trim().length > 0 && destination.iata.trim().length > 0;
 
   return (
     <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
-      <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-4xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+      <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-3xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
 
         {/* Wizard Header */}
         <div className="p-4 sm:p-5 bg-slate-950 border-b border-slate-800 flex items-center justify-between">
@@ -280,10 +238,10 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
             </div>
             <div>
               <h2 className="text-base sm:text-lg font-bold text-white">
-                Lane Creation: Guided 4-Step Wizard
+                Add a New Lane
               </h2>
               <p className="text-xs text-slate-400">
-                Multi-stop route builder with automatic thermal-corridor risk assessment before provisioning
+                Pick a mode, map the route, check the risk, set alert rules
               </p>
             </div>
           </div>
@@ -315,298 +273,35 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
         {/* Wizard Step Body */}
         <div className="flex-1 overflow-y-auto p-5 sm:p-6 text-xs text-slate-200">
 
-          {/* STEP 1: Select Transport Mode */}
+          {/* STEP 1: Define Route & Cargo */}
           {step === 1 && (
             <div className="space-y-4">
               <div>
                 <h3 className="text-sm font-bold text-white mb-1">
-                  Step 1: Select Transport Mode
+                  Where is it going, and what is it?
                 </h3>
                 <p className="text-slate-400">
-                  Choose Air, Sea, Road, or Multimodal — each optimized for a different balance of speed, cost, and flexibility.
-                </p>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 pt-2">
-
-                {/* Mode: Air */}
-                <div
-                  onClick={() => setMode('Air')}
-                  className={`p-4 rounded-xl border cursor-pointer transition-all ${
-                    mode === 'Air'
-                      ? 'bg-sky-950/40 border-sky-500 ring-1 ring-sky-500/50'
-                      : 'bg-slate-950/70 border-slate-800 hover:border-slate-700'
-                  }`}
-                >
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="p-2 rounded-lg bg-sky-500/20 text-sky-400">
-                      <Plane className="w-5 h-5" />
-                    </div>
-                    {mode === 'Air' && <Check className="w-5 h-5 text-sky-400" />}
-                  </div>
-                  <div className="text-sm font-bold text-white mb-1">Air Express & Charter</div>
-                  <p className="text-slate-400 text-[11px] leading-relaxed">
-                    Highest speed, dedicated temperature-controlled holds (Envirotainer/CSafe), ideal for vaccines and biologics.
-                  </p>
-                </div>
-
-                {/* Mode: Sea */}
-                <div
-                  onClick={() => setMode('Sea')}
-                  className={`p-4 rounded-xl border cursor-pointer transition-all ${
-                    mode === 'Sea'
-                      ? 'bg-blue-950/40 border-blue-500 ring-1 ring-blue-500/50'
-                      : 'bg-slate-950/70 border-slate-800 hover:border-slate-700'
-                  }`}
-                >
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="p-2 rounded-lg bg-blue-500/20 text-blue-400">
-                      <Ship className="w-5 h-5" />
-                    </div>
-                    {mode === 'Sea' && <Check className="w-5 h-5 text-blue-400" />}
-                  </div>
-                  <div className="text-sm font-bold text-white mb-1">Sea Reefer Container</div>
-                  <p className="text-slate-400 text-[11px] leading-relaxed">
-                    Cost-effective bulk distribution, active reefer units, requires robust power redundancy and dwell monitoring.
-                  </p>
-                </div>
-
-                {/* Mode: Road */}
-                <div
-                  onClick={() => setMode('Road')}
-                  className={`p-4 rounded-xl border cursor-pointer transition-all ${
-                    mode === 'Road'
-                      ? 'bg-amber-950/40 border-amber-500 ring-1 ring-amber-500/50'
-                      : 'bg-slate-950/70 border-slate-800 hover:border-slate-700'
-                  }`}
-                >
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="p-2 rounded-lg bg-amber-500/20 text-amber-400">
-                      <Truck className="w-5 h-5" />
-                    </div>
-                    {mode === 'Road' && <Check className="w-5 h-5 text-amber-400" />}
-                  </div>
-                  <div className="text-sm font-bold text-white mb-1">Road Pharma Carrier</div>
-                  <p className="text-slate-400 text-[11px] leading-relaxed">
-                    Direct point-to-point European or regional delivery, dual-temp trailers, door-to-door temperature integrity.
-                  </p>
-                </div>
-
-                {/* Mode: Multimodal */}
-                <div
-                  onClick={() => setMode('Multimodal')}
-                  className={`p-4 rounded-xl border cursor-pointer transition-all ${
-                    mode === 'Multimodal'
-                      ? 'bg-purple-950/40 border-purple-500 ring-1 ring-purple-500/50'
-                      : 'bg-slate-950/70 border-slate-800 hover:border-slate-700'
-                  }`}
-                >
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="p-2 rounded-lg bg-purple-500/20 text-purple-400">
-                      <Layers className="w-5 h-5" />
-                    </div>
-                    {mode === 'Multimodal' && <Check className="w-5 h-5 text-purple-400" />}
-                  </div>
-                  <div className="text-sm font-bold text-white mb-1">Multimodal / Intermodal</div>
-                  <p className="text-slate-400 text-[11px] leading-relaxed">
-                    Combines air, road, and bonded rail; requires continuous handoff telemetry and ramp shock monitoring.
-                  </p>
-                </div>
-
-              </div>
-            </div>
-          )}
-
-          {/* STEP 2: Define Route & Cargo */}
-          {step === 2 && (
-            <div className="space-y-4">
-              <div>
-                <h3 className="text-sm font-bold text-white mb-1">
-                  Step 2: Define Route & Cargo Sensitivity
-                </h3>
-                <p className="text-slate-400">
-                  Map the origin, destination, any intermediate stops, carrier, and pharmaceutical product profile so the lane mirrors the real shipment path.
+                  Search by city, country, or IATA code — we'll fill in the rest.
                 </p>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
 
-                {/* Origin Hub */}
-                <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800 space-y-2">
-                  <div className="font-bold text-emerald-400 flex items-center gap-1.5">
-                    <MapPin className="w-3.5 h-3.5" /> Origin Departure Hub
-                  </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="text-[10px] text-slate-400">City</label>
-                      <input
-                        type="text"
-                        value={originCity}
-                        onChange={(e) => setOriginCity(e.target.value)}
-                        className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1 text-slate-100"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[10px] text-slate-400">IATA / Code</label>
-                      <input
-                        type="text"
-                        value={originIata}
-                        onChange={(e) => setOriginIata(e.target.value)}
-                        className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1 text-slate-100 uppercase"
-                      />
-                    </div>
-                  </div>
+                <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800">
+                  <AirportAutocomplete label="Origin" value={origin} onChange={setOrigin} />
                 </div>
 
-                {/* Destination Hub */}
-                <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800 space-y-2">
-                  <div className="font-bold text-emerald-400 flex items-center gap-1.5">
-                    <MapPin className="w-3.5 h-3.5" /> Destination Arrival Hub
-                  </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="text-[10px] text-slate-400">City</label>
-                      <input
-                        type="text"
-                        value={destCity}
-                        onChange={(e) => setDestCity(e.target.value)}
-                        className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1 text-slate-100"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[10px] text-slate-400">IATA / Code</label>
-                      <input
-                        type="text"
-                        value={destIata}
-                        onChange={(e) => setDestIata(e.target.value)}
-                        className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1 text-slate-100 uppercase"
-                      />
-                    </div>
-                  </div>
+                <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800">
+                  <AirportAutocomplete label="Destination" value={destination} onChange={setDestination} />
                 </div>
 
-                {/* Intermediate Stops */}
-                <div className="sm:col-span-2 p-3 rounded-xl bg-slate-950/80 border border-slate-800 space-y-2.5">
-                  <div className="flex items-center justify-between">
-                    <div className="font-bold text-teal-400 flex items-center gap-1.5">
-                      <RouteIcon className="w-3.5 h-3.5" /> Intermediate Stops ({stops.length})
-                    </div>
-                    <button
-                      type="button"
-                      onClick={handleAddStop}
-                      className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-teal-500/15 hover:bg-teal-500/25 text-teal-300 border border-teal-500/30 text-[11px] font-semibold transition-all"
-                    >
-                      <Plus className="w-3.5 h-3.5" /> Add Stop
-                    </button>
-                  </div>
-                  <p className="text-[11px] text-slate-400">
-                    Real logistics lanes rarely run point-to-point. Add layover hubs, customs clearance points, or carrier handovers between {originIata.toUpperCase() || 'origin'} and {destIata.toUpperCase() || 'destination'} — each is scored for thermal risk in Step 3, and stops can be reordered or dropped to manage that risk.
-                  </p>
-
-                  {stops.length === 0 ? (
-                    <div className="text-center py-4 text-slate-500 text-[11px] border border-dashed border-slate-800 rounded-lg">
-                      Direct route — no intermediate stops added.
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      {stops.map((s, i) => (
-                        <div key={s.id} className="p-2.5 rounded-lg bg-slate-900 border border-slate-800 flex flex-wrap items-center gap-2">
-                          <span className="w-5 h-5 rounded-full bg-slate-800 text-slate-300 flex items-center justify-center text-[10px] font-bold flex-shrink-0">
-                            {i + 1}
-                          </span>
-                          <input
-                            type="text"
-                            value={s.city}
-                            onChange={(e) => handleUpdateStop(s.id, { city: e.target.value })}
-                            placeholder="City"
-                            className="w-28 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-slate-100"
-                          />
-                          <input
-                            type="text"
-                            value={s.iata}
-                            onChange={(e) => handleUpdateStop(s.id, { iata: e.target.value.toUpperCase() })}
-                            placeholder="IATA"
-                            className="w-16 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-slate-100 uppercase"
-                          />
-                          <input
-                            type="text"
-                            value={s.country}
-                            onChange={(e) => handleUpdateStop(s.id, { country: e.target.value })}
-                            placeholder="Country"
-                            className="w-24 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-slate-100"
-                          />
-                          <select
-                            value={s.stopType}
-                            onChange={(e) => handleUpdateStop(s.id, { stopType: e.target.value as RouteStop['stopType'] })}
-                            className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-slate-100"
-                          >
-                            <option value="Transit Hub">Transit Hub</option>
-                            <option value="Customs Clearance">Customs Clearance</option>
-                            <option value="Carrier Handover">Carrier Handover</option>
-                            <option value="Cold Storage Layover">Cold Storage Layover</option>
-                          </select>
-                          <div className="flex items-center gap-1">
-                            <input
-                              type="number"
-                              min="0"
-                              max="72"
-                              value={s.plannedDwellHours}
-                              onChange={(e) => handleUpdateStop(s.id, { plannedDwellHours: parseFloat(e.target.value) || 0 })}
-                              className="w-14 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-slate-100"
-                            />
-                            <span className="text-[10px] text-slate-400">hrs dwell</span>
-                          </div>
-
-                          <div className="flex items-center gap-1 ml-auto">
-                            <button
-                              type="button"
-                              onClick={() => handleMoveStop(s.id, -1)}
-                              disabled={i === 0}
-                              className="p-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 disabled:opacity-30 disabled:cursor-not-allowed"
-                              title="Move earlier in route"
-                            >
-                              <ChevronUp className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleMoveStop(s.id, 1)}
-                              disabled={i === stops.length - 1}
-                              className="p-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 disabled:opacity-30 disabled:cursor-not-allowed"
-                              title="Move later in route"
-                            >
-                              <ChevronDown className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleRemoveStop(s.id)}
-                              className="p-1 rounded bg-rose-500/15 hover:bg-rose-500/25 text-rose-300"
-                              title="Remove stop"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* Route Preview Breadcrumb */}
-                  <div className="pt-2 border-t border-slate-800 flex items-center flex-wrap gap-1.5 text-[11px] font-mono text-slate-300">
-                    <span className="px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">{originIata.toUpperCase() || '???'}</span>
-                    {stops.map((s) => (
-                      <React.Fragment key={s.id}>
-                        <ArrowRight className="w-3 h-3 text-slate-500" />
-                        <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">{s.iata.toUpperCase() || '???'}</span>
-                      </React.Fragment>
-                    ))}
-                    <ArrowRight className="w-3 h-3 text-slate-500" />
-                    <span className="px-2 py-0.5 rounded bg-purple-500/15 text-purple-300 border border-purple-500/30">{destIata.toUpperCase() || '???'}</span>
-                  </div>
+                <div className="sm:col-span-2">
+                  <RouteStopsEditor origin={origin} destination={destination} stops={stops} onStopsChange={setStops} tempMin={tempMin} tempMax={tempMax} />
                 </div>
 
                 {/* Carrier & Product */}
                 <div>
-                  <label className="block text-[11px] text-slate-400 mb-1">Carrier Partner</label>
+                  <label className="block text-[11px] text-slate-400 mb-1">Carrier</label>
                   <select
                     value={carrier}
                     onChange={(e) => setCarrier(e.target.value)}
@@ -623,7 +318,7 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
                 </div>
 
                 <div>
-                  <label className="block text-[11px] text-slate-400 mb-1">Pharmaceutical Category</label>
+                  <label className="block text-[11px] text-slate-400 mb-1">Product Type</label>
                   <select
                     value={productCategory}
                     onChange={(e) => setProductCategory(e.target.value as any)}
@@ -641,7 +336,7 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
                 {/* Temperature Envelope Specification */}
                 <div className="sm:col-span-2 p-3 rounded-xl bg-slate-950/80 border border-slate-800 space-y-2">
                   <label className="block text-[11px] font-bold text-teal-400 uppercase tracking-wider">
-                    Temperature Control Specification
+                    Required Temperature Range
                   </label>
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                     {[
@@ -670,21 +365,156 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
             </div>
           )}
 
+          {/* STEP 2: Select Transport Mode */}
+          {step === 2 && (
+            <div className="space-y-4">
+              <div>
+                <h3 className="text-sm font-bold text-white mb-1">
+                  How is this shipment moving?
+                </h3>
+                <p className="text-slate-400">
+                  This sets the baseline risk profile and which controls apply later.
+                </p>
+              </div>
+
+              {modeRecommendation && (
+                <div className="p-3 rounded-xl bg-teal-500/10 border border-teal-500/25 flex items-start gap-2.5">
+                  <Sparkles className="w-4 h-4 text-teal-400 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <div className="text-xs font-bold text-teal-300">
+                      Recommended: {modeRecommendation.mode}
+                      {mode !== modeRecommendation.mode && (
+                        <button
+                          type="button"
+                          onClick={() => setMode(modeRecommendation.mode)}
+                          className="ml-2 text-[10px] font-semibold text-teal-400 hover:text-teal-300 underline"
+                        >
+                          Use this
+                        </button>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-slate-400 mt-0.5">{modeRecommendation.reason}</p>
+                  </div>
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 pt-2">
+
+                {/* Mode: Air */}
+                <div
+                  onClick={() => setMode('Air')}
+                  className={`p-4 rounded-xl border cursor-pointer transition-all relative ${
+                    mode === 'Air'
+                      ? 'bg-sky-950/40 border-sky-500 ring-1 ring-sky-500/50'
+                      : 'bg-slate-950/70 border-slate-800 hover:border-slate-700'
+                  }`}
+                >
+                  {modeRecommendation?.mode === 'Air' && (
+                    <span className="absolute -top-2 left-3 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-teal-500 text-slate-950">Recommended</span>
+                  )}
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="p-2 rounded-lg bg-sky-500/20 text-sky-400">
+                      <Plane className="w-5 h-5" />
+                    </div>
+                    {mode === 'Air' && <Check className="w-5 h-5 text-sky-400" />}
+                  </div>
+                  <div className="text-sm font-bold text-white mb-1">Air</div>
+                  <p className="text-slate-400 text-[11px] leading-relaxed">
+                    Fastest option with temperature-controlled holds. Best for vaccines and biologics.
+                  </p>
+                </div>
+
+                {/* Mode: Sea */}
+                <div
+                  onClick={() => setMode('Sea')}
+                  className={`p-4 rounded-xl border cursor-pointer transition-all relative ${
+                    mode === 'Sea'
+                      ? 'bg-blue-950/40 border-blue-500 ring-1 ring-blue-500/50'
+                      : 'bg-slate-950/70 border-slate-800 hover:border-slate-700'
+                  }`}
+                >
+                  {modeRecommendation?.mode === 'Sea' && (
+                    <span className="absolute -top-2 left-3 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-teal-500 text-slate-950">Recommended</span>
+                  )}
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="p-2 rounded-lg bg-blue-500/20 text-blue-400">
+                      <Ship className="w-5 h-5" />
+                    </div>
+                    {mode === 'Sea' && <Check className="w-5 h-5 text-blue-400" />}
+                  </div>
+                  <div className="text-sm font-bold text-white mb-1">Sea</div>
+                  <p className="text-slate-400 text-[11px] leading-relaxed">
+                    Cost-effective for bulk cargo. Longer transit, needs reliable reefer power.
+                  </p>
+                </div>
+
+                {/* Mode: Road */}
+                <div
+                  onClick={() => setMode('Road')}
+                  className={`p-4 rounded-xl border cursor-pointer transition-all relative ${
+                    mode === 'Road'
+                      ? 'bg-amber-950/40 border-amber-500 ring-1 ring-amber-500/50'
+                      : 'bg-slate-950/70 border-slate-800 hover:border-slate-700'
+                  }`}
+                >
+                  {modeRecommendation?.mode === 'Road' && (
+                    <span className="absolute -top-2 left-3 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-teal-500 text-slate-950">Recommended</span>
+                  )}
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="p-2 rounded-lg bg-amber-500/20 text-amber-400">
+                      <Truck className="w-5 h-5" />
+                    </div>
+                    {mode === 'Road' && <Check className="w-5 h-5 text-amber-400" />}
+                  </div>
+                  <div className="text-sm font-bold text-white mb-1">Road</div>
+                  <p className="text-slate-400 text-[11px] leading-relaxed">
+                    Direct regional delivery in dual-temperature trailers, door to door.
+                  </p>
+                </div>
+
+                {/* Mode: Multimodal */}
+                <div
+                  onClick={() => setMode('Multimodal')}
+                  className={`p-4 rounded-xl border cursor-pointer transition-all relative ${
+                    mode === 'Multimodal'
+                      ? 'bg-purple-950/40 border-purple-500 ring-1 ring-purple-500/50'
+                      : 'bg-slate-950/70 border-slate-800 hover:border-slate-700'
+                  }`}
+                >
+                  {modeRecommendation?.mode === 'Multimodal' && (
+                    <span className="absolute -top-2 left-3 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-teal-500 text-slate-950">Recommended</span>
+                  )}
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="p-2 rounded-lg bg-purple-500/20 text-purple-400">
+                      <Layers className="w-5 h-5" />
+                    </div>
+                    {mode === 'Multimodal' && <Check className="w-5 h-5 text-purple-400" />}
+                  </div>
+                  <div className="text-sm font-bold text-white mb-1">Multimodal</div>
+                  <p className="text-slate-400 text-[11px] leading-relaxed">
+                    Combines air, road, and rail. Needs continuous handoff monitoring.
+                  </p>
+                </div>
+
+              </div>
+            </div>
+          )}
+
           {/* STEP 3: Risk Assessment & Recommendation */}
           {step === 3 && (
             <div className="space-y-4">
               <div>
                 <h3 className="text-sm font-bold text-white mb-1">
-                  Step 3: Route Risk Assessment & Recommendation
+                  Is this route safe for this cargo?
                 </h3>
                 <p className="text-slate-400">
-                  Automatic scoring of this route against known thermal-hotspot corridors, transport mode, and handling exposure — before the lane is provisioned.
+                  We check the route against known heat and cold corridors before you provision it.
                 </p>
               </div>
 
               {!assessment ? (
                 <div className="p-4 rounded-xl bg-slate-950/70 border border-slate-800 text-slate-400 text-center">
-                  Enter an origin and destination IATA code in Step 2 to generate a risk assessment.
+                  Go back to Step 1 and pick an origin and destination to see the risk check.
                 </div>
               ) : (
                 <>
@@ -711,7 +541,7 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
                           {assessment.verdict}
                         </div>
                         <p className="text-[11px] text-slate-400">
-                          Composite route risk score: <strong className="text-slate-200">{assessment.overallScore}%</strong> ({assessment.overallLevel})
+                          Route risk score: <strong className="text-slate-200">{assessment.overallScore}%</strong> ({assessment.overallLevel})
                         </p>
                       </div>
                     </div>
@@ -736,7 +566,7 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
                             </span>
                           </div>
                           {leg.flags.length === 0 ? (
-                            <p className="text-[11px] text-slate-400">No hotspot conflicts detected.</p>
+                            <p className="text-[11px] text-slate-400">No known thermal-hotspot conflicts.</p>
                           ) : (
                             leg.flags.map((f, i) => (
                               <p key={i} className="text-[11px] text-slate-300 leading-relaxed mb-1">{f}</p>
@@ -745,7 +575,7 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
                           {leg.label.startsWith('Stop') && (
                             <button
                               type="button"
-                              onClick={() => handleRemoveStop(stops.find((s) => s.iata.toUpperCase() === leg.iata)?.id || '')}
+                              onClick={() => setStops((prev) => prev.filter((s) => s.iata.toUpperCase() !== leg.iata))}
                               className="mt-1.5 text-[11px] font-semibold text-rose-300 hover:text-rose-200 flex items-center gap-1"
                             >
                               <Trash2 className="w-3 h-3" /> Remove this stop
@@ -759,7 +589,7 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
                   {/* Recommendations */}
                   <div className="p-3.5 rounded-xl bg-slate-950/80 border border-slate-800">
                     <div className="text-[11px] font-bold text-teal-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-                      <Sparkles className="w-3.5 h-3.5" /> Recommendations
+                      <Sparkles className="w-3.5 h-3.5" /> What we'd suggest
                     </div>
                     <ul className="space-y-1.5">
                       {assessment.recommendations.map((r, i) => (
@@ -780,10 +610,10 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
             <div className="space-y-4">
               <div>
                 <h3 className="text-sm font-bold text-white mb-1">
-                  Step 4: Set Automatic Alert Thresholds
+                  When should we alert you?
                 </h3>
                 <p className="text-slate-400">
-                  Configure temperature excursion, transit delay, and shock limits that trigger automatic risk alerts.
+                  Set the temperature, delay, and shock limits that trigger an automatic alert.
                 </p>
               </div>
 
@@ -796,7 +626,7 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
                     <span className="font-mono font-bold text-emerald-400">{maxExcursionMinutes} mins</span>
                   </div>
                   <p className="text-[11px] text-slate-400 mb-2">
-                    Alert triggers if temp deviates beyond target for this continuous duration.
+                    Alert if temp stays outside range longer than this.
                   </p>
                   <input
                     type="range"
@@ -812,11 +642,11 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
                 {/* Warning Tolerance */}
                 <div className="p-3.5 bg-slate-950/70 border border-slate-800 rounded-xl">
                   <div className="flex items-center justify-between mb-1">
-                    <label className="font-semibold text-slate-200">Pre-Excursion Warning Buffer</label>
+                    <label className="font-semibold text-slate-200">Early Warning Buffer</label>
                     <span className="font-mono font-bold text-amber-400">±{warningTolerance}°C</span>
                   </div>
                   <p className="text-[11px] text-slate-400 mb-2">
-                    Early warning alert before payload reaches critical limit.
+                    Warn before the payload actually reaches its limit.
                   </p>
                   <input
                     type="range"
@@ -836,7 +666,7 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
                     <span className="font-mono font-bold text-slate-200">{maxAllowedDelay} hrs</span>
                   </div>
                   <p className="text-[11px] text-slate-400 mb-2">
-                    Flags transit risk if route delay exceeds buffer time.
+                    Flag the lane as at-risk if it runs later than this.
                   </p>
                   <input
                     type="range"
@@ -852,11 +682,11 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
                 {/* Shock & Handling Limit */}
                 <div className="p-3.5 bg-slate-950/70 border border-slate-800 rounded-xl">
                   <div className="flex items-center justify-between mb-1">
-                    <label className="font-semibold text-slate-200">Shock G-Force Limit</label>
+                    <label className="font-semibold text-slate-200">Shock Limit</label>
                     <span className="font-mono font-bold text-purple-400">{maxShockG} G</span>
                   </div>
                   <p className="text-[11px] text-slate-400 mb-2">
-                    Flags pallet drop or rough handling incident.
+                    Flag a drop or rough-handling incident above this.
                   </p>
                   <input
                     type="range"
@@ -874,8 +704,8 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
               {/* Notification Checkboxes */}
               <div className="p-3.5 bg-slate-950 border border-slate-800 rounded-xl flex items-center justify-between">
                 <div>
-                  <div className="font-bold text-slate-200">Automated Notification Dispatch</div>
-                  <div className="text-slate-400 text-[11px]">Direct SMS & Email broadcast to on-duty QA & Logistics team</div>
+                  <div className="font-bold text-slate-200">Who gets notified</div>
+                  <div className="text-slate-400 text-[11px]">Sent to the on-duty QA & Logistics team</div>
                 </div>
                 <div className="flex items-center gap-4">
                   <label className="flex items-center gap-1.5 cursor-pointer">
@@ -885,7 +715,7 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
                       onChange={(e) => setEmailAlerts(e.target.checked)}
                       className="accent-emerald-500 rounded"
                     />
-                    <span>Email SOP</span>
+                    <span>Email</span>
                   </label>
                   <label className="flex items-center gap-1.5 cursor-pointer">
                     <input
@@ -894,7 +724,7 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
                       onChange={(e) => setSmsAlerts(e.target.checked)}
                       className="accent-emerald-500 rounded"
                     />
-                    <span>SMS Urgent</span>
+                    <span>SMS (urgent only)</span>
                   </label>
                 </div>
               </div>
@@ -925,9 +755,10 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
           {step < 4 ? (
             <button
               onClick={() => setStep((step + 1) as any)}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-lg transition-all"
+              disabled={step === 1 && !canAdvanceFromStep1}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-lg transition-all disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              <span>Next Step</span>
+              <span>Next</span>
               <ArrowRight className="w-4 h-4" />
             </button>
           ) : (
@@ -936,7 +767,7 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
               className="flex items-center gap-1.5 px-5 py-2 rounded-lg bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-bold shadow-lg transition-all"
             >
               <Check className="w-4 h-4" />
-              <span>Provision Active Lane</span>
+              <span>Create Lane</span>
             </button>
           )}
         </div>
