@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { ComposableMap, Geographies, Geography, Marker, Line } from 'react-simple-maps';
 import {
   Flame,
@@ -25,6 +25,8 @@ import {
 import { TransportLane, RegionalThermalHotspot, HeatmapConfig } from '../types';
 import { REGIONAL_THERMAL_HOTSPOTS, getThermalRiskColor } from '../data/temperatureRiskData';
 import { isLaneExcursing } from '../utils/laneRisk';
+import { haversineKm } from '../utils/geoMath';
+import { HOTSPOT_INFLUENCE_RADIUS_KM } from '../utils/riskAssessment';
 
 const geoUrl = 'https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json';
 
@@ -63,6 +65,21 @@ export const RegionalTemperatureHeatmapView: React.FC<RegionalTemperatureHeatmap
   }, []);
 
   const excursionCount = lanes.filter(isLaneExcursing).length;
+
+  // REGIONAL_THERMAL_HOTSPOTS.affectedLaneCodes is illustrative mock data seeded with lane codes
+  // that don't correspond to any real transport_lanes row — clicking one would find nothing. This
+  // derives the real set instead: any live lane whose origin, an intermediate stop, or its
+  // destination falls within the hotspot's influence radius (the same threshold assessRoute uses
+  // to flag a leg) genuinely traverses this zone.
+  const realAffectedLaneCodes = useMemo(() => {
+    if (!selectedHotspot) return [];
+    return lanes
+      .filter((lane) => {
+        const points: [number, number][] = [lane.originCoords, ...lane.stops.map((s) => s.coords), lane.destinationCoords];
+        return points.some((p) => haversineKm(p, selectedHotspot.coords) <= HOTSPOT_INFLUENCE_RADIUS_KM);
+      })
+      .map((lane) => lane.laneCode);
+  }, [lanes, selectedHotspot]);
 
   const filteredHotspots = REGIONAL_THERMAL_HOTSPOTS.filter(h => {
     if (filterLevel === 'EXTREME') return h.thermalRiskLevel === 'Extreme Heat';
@@ -427,27 +444,36 @@ export const RegionalTemperatureHeatmapView: React.FC<RegionalTemperatureHeatmap
               <div className="flex items-center justify-between mb-1.5">
                 <span className="font-bold text-slate-200 flex items-center gap-1.5">
                   <Layers className="w-4 h-4 text-teal-400" />
-                  Active Shipments Traversing This Zone ({selectedHotspot.affectedLaneCodes.length})
+                  Active Shipments Traversing This Zone ({realAffectedLaneCodes.length})
                 </span>
               </div>
-              <div className="flex flex-wrap gap-1.5 mb-2">
-                {selectedHotspot.affectedLaneCodes.map((code) => {
-                  const matchedLane = lanes.find(l => l.laneCode === code);
-                  return (
-                    <button
-                      key={code}
-                      onClick={() => matchedLane && onSelectLane(matchedLane)}
-                      className="px-2.5 py-1 rounded bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 font-mono text-[11px] flex items-center gap-1 transition-colors"
-                    >
-                      {code}
-                      <ArrowRight className="w-3 h-3 text-slate-400" />
-                    </button>
-                  );
-                })}
-              </div>
-              <p className="text-[11px] text-slate-400 italic">
-                Click any lane code above to inspect real-time core telemetry and thermal margin status.
-              </p>
+              {realAffectedLaneCodes.length === 0 ? (
+                <div className="flex items-center gap-2 py-2 text-slate-400 text-[11px]">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
+                  <span>No active lanes currently route through this zone.</span>
+                </div>
+              ) : (
+                <>
+                  <div className="flex flex-wrap gap-1.5 mb-2">
+                    {realAffectedLaneCodes.map((code) => {
+                      const matchedLane = lanes.find(l => l.laneCode === code);
+                      return (
+                        <button
+                          key={code}
+                          onClick={() => matchedLane && onSelectLane(matchedLane)}
+                          className="px-2.5 py-1 rounded bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 font-mono text-[11px] flex items-center gap-1 transition-colors"
+                        >
+                          {code}
+                          <ArrowRight className="w-3 h-3 text-slate-400" />
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <p className="text-[11px] text-slate-400 italic">
+                    Click any lane code above to inspect real-time core telemetry and thermal margin status.
+                  </p>
+                </>
+              )}
             </div>
           </div>
         </div>

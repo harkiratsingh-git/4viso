@@ -2,8 +2,9 @@
 // corridor_advisories row to real coordinates, then uses the same great-circle cross-track
 // math as the CEIV stop recommendations to decide whether a given origin->destination route
 // genuinely passes through the advisory's zone — not just "is this vaguely related."
-import { CorridorAdvisory, TransportMode } from '../types';
+import { CorridorAdvisory, TransportMode, TransportLane, WeatherDisruption } from '../types';
 import { haversineKm } from './geoMath';
+import { formatRelative } from './dateFormat';
 
 /** Known coordinates for major shipping/aviation chokepoints and named corridor regions that
  * corridor_advisories.affected_waypoints may reference. Waypoints not in this list are simply
@@ -111,4 +112,43 @@ export function findRelevantAdvisories(
   return advisories
     .filter((a) => a.severity !== 'Informational' && advisoryIntersectsRoute(a, originCoords, destCoords))
     .map((advisory) => ({ advisory, isStale: isAdvisoryStale(advisory.asOf) }));
+}
+
+function severityToWeatherSeverity(severity: CorridorAdvisory['severity']): WeatherDisruption['severity'] {
+  if (severity === 'Avoid') return 'Critical';
+  if (severity === 'Elevated Risk') return 'Warning';
+  return 'Advisory';
+}
+
+/**
+ * The "Weather & Route Disruption Feed" panel used to show entirely hardcoded mock entries
+ * with lane codes that never matched any real row in transport_lanes — a Quality Lead clicking
+ * through would find nothing, which undermines trust in every other panel. This derives real
+ * entries instead: for each actual lane, check which live corridor_advisories genuinely affect
+ * its route (same logic the wizard uses), and group lanes that share an advisory into one
+ * disruption entry with only their real lane codes. Returns [] when nothing real applies —
+ * an honest empty state, not filler content.
+ */
+export function deriveDisruptionsFromAdvisories(lanes: TransportLane[], advisories: CorridorAdvisory[]): WeatherDisruption[] {
+  const byAdvisoryId = new Map<string, { advisory: CorridorAdvisory; laneCodes: string[] }>();
+
+  for (const lane of lanes) {
+    const relevant = findRelevantAdvisories(advisories, lane.originCoords, lane.destinationCoords, lane.mode);
+    for (const { advisory } of relevant) {
+      const entry = byAdvisoryId.get(advisory.id);
+      if (entry) entry.laneCodes.push(lane.laneCode);
+      else byAdvisoryId.set(advisory.id, { advisory, laneCodes: [lane.laneCode] });
+    }
+  }
+
+  return Array.from(byAdvisoryId.values()).map(({ advisory, laneCodes }) => ({
+    id: advisory.id,
+    region: advisory.corridorName,
+    type: 'Corridor Advisory' as const,
+    severity: severityToWeatherSeverity(advisory.severity),
+    impactDescription: isAdvisoryStale(advisory.asOf) ? `${STALENESS_WARNING_PREFIX} ${advisory.summary}` : advisory.summary,
+    delayEstimated: advisory.recommendedAlternative,
+    affectedLaneCodes: laneCodes,
+    lastUpdated: formatRelative(advisory.asOf),
+  }));
 }

@@ -164,7 +164,7 @@ export interface AlertNotification {
 export interface WeatherDisruption {
   id: string;
   region: string;
-  type: 'Severe Storm' | 'Port Congestion' | 'Airspace Closure' | 'Low Visibility' | 'Heatwave Warning';
+  type: 'Severe Storm' | 'Port Congestion' | 'Airspace Closure' | 'Low Visibility' | 'Heatwave Warning' | 'Corridor Advisory';
   severity: 'Critical' | 'Warning' | 'Advisory';
   impactDescription: string;
   delayEstimated: string;

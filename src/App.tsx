@@ -1,20 +1,21 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   INITIAL_LANES, 
   INITIAL_WEATHER_DISRUPTIONS, 
   INITIAL_AUDIT_LOGS, 
   INITIAL_ALERTS 
 } from './data/mockData';
-import { 
-  TransportLane, 
-  FilterState, 
-  UserRole, 
-  AlertNotification, 
-  AuditLogEntry, 
-  RiskFactor, 
+import {
+  TransportLane,
+  FilterState,
+  UserRole,
+  AlertNotification,
+  AuditLogEntry,
+  RiskFactor,
   TemperatureReading,
   SystemSettings,
-  SupabaseUser
+  SupabaseUser,
+  CorridorAdvisory
 } from './types';
 import { Sidebar, USER_ROLES, AppTab } from './components/Sidebar';
 import { TopBar } from './components/TopBar';
@@ -28,7 +29,8 @@ import { ManageLaneStopsModal } from './components/ManageLaneStopsModal';
 import { LiveIndicator } from './components/LiveIndicator';
 import { EditLaneModal } from './components/EditLaneModal';
 import { CertificationIssue } from './utils/ports';
-import { isLaneExcursing, isLaneHighRisk, getEffectiveRiskLevel } from './utils/laneRisk';
+import { isLaneExcursing, isLaneHighRisk, getEffectiveRiskLevel, getEffectiveRiskScore } from './utils/laneRisk';
+import { deriveDisruptionsFromAdvisories } from './utils/corridorAdvisories';
 import { formatUtcCompact, formatUtcCompactNoSeconds } from './utils/dateFormat';
 import { TemperatureMonitoringSystem } from './components/TemperatureMonitoringSystem';
 import { NewLaneWizardModal } from './components/NewLaneWizardModal';
@@ -41,7 +43,7 @@ import { AutomatedReportingModal } from './components/AutomatedReportingModal';
 import { SupabaseSyncModal } from './components/SupabaseSyncModal';
 import { SettingsPage } from './components/SettingsPage';
 import { LoginPage } from './components/LoginPage';
-import { getActiveUser, setActiveUser as persistActiveUser, DEFAULT_SUPABASE_USER, fetchAllFromSupabase, restoreSupabaseSession, signOutFromSupabase, fetchDashboardSummary, DashboardSummary, getSupabaseClient, searchLanesRemote, insertAuditLogEntry } from './services/supabaseService';
+import { getActiveUser, setActiveUser as persistActiveUser, DEFAULT_SUPABASE_USER, fetchAllFromSupabase, restoreSupabaseSession, signOutFromSupabase, fetchDashboardSummary, DashboardSummary, getSupabaseClient, searchLanesRemote, insertAuditLogEntry, syncLaneRiskToSupabase, fetchCorridorAdvisories } from './services/supabaseService';
 import { mapRowToTemperatureReading, mapRowToAlert } from './services/supabaseMappers';
 import {
   ShieldCheck,
@@ -76,6 +78,7 @@ export default function App() {
   const [lanes, setLanes] = useState<TransportLane[]>(INITIAL_LANES);
   const [alerts, setAlerts] = useState<AlertNotification[]>(INITIAL_ALERTS);
   const [disruptions, setDisruptions] = useState(INITIAL_WEATHER_DISRUPTIONS);
+  const [corridorAdvisories, setCorridorAdvisories] = useState<CorridorAdvisory[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>(INITIAL_AUDIT_LOGS);
 
   // User & Settings states
@@ -137,6 +140,20 @@ export default function App() {
       .catch(err => console.warn('Failed to refresh dashboard_summary:', err));
   };
 
+  // dashboard_summary (and anything else reading risk_level directly) can only ever agree
+  // with the Lane table if transport_lanes.risk_score/risk_level actually reflect live state —
+  // they're stored columns set at creation time, never updated by the temperature simulation
+  // itself. Correct any lane whose stored risk disagrees with the live-computed effective risk
+  // (utils/laneRisk.ts), then refresh the summary so the dashboard cards pick up the fix.
+  const reconcileLaneRiskWithSupabase = async (lanesToCheck: TransportLane[]) => {
+    const stale = lanesToCheck.filter(
+      (l) => getEffectiveRiskScore(l) !== l.riskScore || getEffectiveRiskLevel(l) !== l.riskLevel
+    );
+    if (stale.length === 0) return;
+    await Promise.all(stale.map((l) => syncLaneRiskToSupabase(l.id, getEffectiveRiskScore(l), getEffectiveRiskLevel(l))));
+    refreshDashboardSummary();
+  };
+
   // On mount, attempt to load real data from the connected Supabase project.
   // Falls back to the local demo dataset (already the initial state above) if unavailable.
   useEffect(() => {
@@ -151,6 +168,8 @@ export default function App() {
           if (result.auditLogs.length > 0) setAuditLogs(result.auditLogs);
           setDataSource('cloud');
           refreshDashboardSummary();
+          reconcileLaneRiskWithSupabase(result.lanes);
+          fetchCorridorAdvisories().then((a) => a && setCorridorAdvisories(a));
         } else {
           setDataSource('local');
         }
@@ -246,12 +265,14 @@ export default function App() {
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'temperature_telemetry' }, (payload) => {
         const reading = mapRowToTemperatureReading(payload.new);
         const laneId = String((payload.new as any).lane_id);
-        setLanes(prev => prev.map(l => (
-          l.id === laneId
-            ? { ...l, currentTemp: reading.coreTemp, temperatureHistory: [...l.temperatureHistory.slice(-9), reading] }
-            : l
-        )));
+        let updatedLane: TransportLane | null = null;
+        setLanes(prev => prev.map(l => {
+          if (l.id !== laneId) return l;
+          updatedLane = { ...l, currentTemp: reading.coreTemp, temperatureHistory: [...l.temperatureHistory.slice(-9), reading] };
+          return updatedLane;
+        }));
         refreshDashboardSummary();
+        if (updatedLane) reconcileLaneRiskWithSupabase([updatedLane]);
       })
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'alert_notifications' }, (payload) => {
         const alert = mapRowToAlert(payload.new);
@@ -589,6 +610,15 @@ export default function App() {
     });
   };
 
+  // Real disruption feed: only shown when cloud-connected, since it's derived from live
+  // corridor_advisories against live lanes — in local demo mode there's no live advisory feed
+  // to check against, so it falls back to the local mock dataset (same fictional universe as
+  // the local demo lanes, not mixed with real data).
+  const effectiveDisruptions = useMemo(
+    () => (dataSource === 'cloud' ? deriveDisruptionsFromAdvisories(lanes, corridorAdvisories) : disruptions),
+    [dataSource, lanes, corridorAdvisories, disruptions]
+  );
+
   // Filter application
   const filteredLanes = lanes.filter(lane => {
     if (filters.searchQuery.trim() !== '') {
@@ -733,7 +763,7 @@ export default function App() {
 
             {/* Weather & Route Disruption Alerts Feed */}
             <WeatherDisruptions
-              disruptions={disruptions}
+              disruptions={effectiveDisruptions}
               selectedLaneCode={riskModalLane?.laneCode || null}
               onFilterByLaneCode={(code) => {
                 setFilters(prev => ({ ...prev, searchQuery: code }));

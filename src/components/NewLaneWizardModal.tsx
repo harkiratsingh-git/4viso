@@ -446,9 +446,11 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
               score: l.riskScore,
               likelihood: 'Moderate' as const,
               impact: 'Major' as const,
-              mitigationStrategy: assessment.suggestedHubs.length
-                ? `Consider rerouting via ${assessment.suggestedHubs.join(', ')} instead.`
-                : 'Deploy thermal cover wrap and minimize tarmac dwell time at this stop.',
+              mitigationStrategy: l.label.startsWith('Stop')
+                ? assessment.suggestedHubs.length
+                  ? `Consider rerouting via ${assessment.suggestedHubs.join(', ')} instead.`
+                  : 'Deploy thermal cover wrap and minimize tarmac dwell time at this stop.'
+                : 'Fixed origin/destination point — cannot be rerouted. Apply additional ground-handling mitigation (pre-conditioned ULDs/containers, expedited tarmac transfer, CEIV Pharma-certified facility handling) instead.',
               recommendedAction: 'Reassess this leg before dispatch; monitor telemetry closely on arrival.'
             }))
         : [])
@@ -748,7 +750,7 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
                     {carrierRecommendations.length > 0 ? (
                       carrierRecommendations.map((c) => (
                         <option key={c.carrier.id} value={c.carrier.name}>
-                          {c.carrier.name} — score {c.score}/100
+                          {c.carrier.name} — reliability {c.carrier.reliabilityScore}/100
                         </option>
                       ))
                     ) : (
@@ -768,6 +770,9 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
                       <Sparkles className="w-3 h-3 text-teal-400 flex-shrink-0 mt-0.5" />
                       <div className="text-[11px] text-slate-300 leading-relaxed min-w-0">
                         <span className="font-bold text-teal-300">Recommended: {topCarrierPick.carrier.name}</span>
+                        <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded bg-teal-500/20 text-teal-300 font-mono">
+                          Match {topCarrierPick.score}/100
+                        </span>
                         {carrier !== topCarrierPick.carrier.name && (
                           <button
                             type="button"

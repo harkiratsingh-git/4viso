@@ -6,7 +6,7 @@ import { haversineKm } from './geoMath';
 // suggested low-risk alternatives when a route leg is flagged.
 const KNOWN_LOW_RISK_HUBS = ['FRA', 'AMS', 'ZRH', 'BRU', 'NRT', 'DUB', 'BSL'];
 
-const HOTSPOT_INFLUENCE_RADIUS_KM = 700;
+export const HOTSPOT_INFLUENCE_RADIUS_KM = 700;
 
 export interface RouteLegPoint {
   label: string; // 'Origin' | 'Stop 1' | ... | 'Destination'
@@ -96,10 +96,18 @@ export function assessRoute(params: {
   const verdict = overallScore >= 55 ? 'High Risk - Reroute Advised' : overallScore >= 30 ? 'Review Recommended' : 'Recommended';
 
   const recommendations: string[] = [];
-  const flaggedIatas = new Set<string>();
+  // A layover stop can be swapped for a different hub; the origin and destination are fixed
+  // points on the shipment (that's where the payload actually starts and must arrive) and can't
+  // be "rerouted via a different hub" — so they're tracked separately and get mitigation copy
+  // appropriate to a fixed point instead of a reroute suggestion.
+  const flaggedStopIatas = new Set<string>();
+  let originOrDestFlagged = false;
   legs.forEach((l) => {
     l.flags.forEach((f) => recommendations.push(`${l.label} (${l.iata}): ${f}`));
-    if (l.flags.length > 0) flaggedIatas.add(l.iata);
+    if (l.flags.length > 0) {
+      if (l.label.startsWith('Stop')) flaggedStopIatas.add(l.iata);
+      else originOrDestFlagged = true;
+    }
   });
 
   if (params.stops.length >= 3) {
@@ -109,13 +117,20 @@ export function assessRoute(params: {
   }
 
   const suggestedHubs = KNOWN_LOW_RISK_HUBS.filter(
-    (h) => h !== params.origin.iata && h !== params.destination.iata && !flaggedIatas.has(h)
+    (h) => h !== params.origin.iata && h !== params.destination.iata && !flaggedStopIatas.has(h)
   ).slice(0, 4);
 
   if (recommendations.length === 0) {
     recommendations.push('No known thermal hotspot conflicts detected along this route. Standard cold-chain SOPs apply.');
-  } else if (suggestedHubs.length > 0) {
-    recommendations.push(`Consider routing flagged stops via a lower-risk hub instead, e.g. ${suggestedHubs.join(', ')}.`);
+  } else {
+    if (flaggedStopIatas.size > 0 && suggestedHubs.length > 0) {
+      recommendations.push(`Consider routing flagged stops via a lower-risk hub instead, e.g. ${suggestedHubs.join(', ')}.`);
+    }
+    if (originOrDestFlagged) {
+      recommendations.push(
+        'The origin/destination flagged above is a fixed point and cannot be substituted with a different hub — consider additional ground-handling mitigation (pre-conditioned ULDs/containers, expedited tarmac transfer, CEIV Pharma-certified facility handling) instead.'
+      );
+    }
   }
 
   return { overallScore, overallLevel, verdict, legs, recommendations, suggestedHubs };

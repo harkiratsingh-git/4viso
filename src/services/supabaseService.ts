@@ -931,3 +931,24 @@ supabase functions deploy assistant
 # nothing else to configure. The frontend chat panel calls this function automatically once
 # it's deployed; until then it shows a clear "assistant isn't reachable yet" message instead
 # of failing silently.`;
+
+/**
+ * Writes the live-computed effective risk (see utils/laneRisk.ts) back to transport_lanes'
+ * risk_score/risk_level columns. This exists because dashboard_summary (and anything else
+ * that reads risk_level directly) has no way to know a lane is currently excursing unless
+ * that fact is persisted — risk_level is a stored column set at creation time, not derived
+ * live. Rather than have two definitions of "high risk" (the UI's live derivation vs. the
+ * DB's stale stored value), this keeps the stored value itself correct, so every consumer —
+ * the Lane table, the dashboard view, a future report — agrees by construction. Fire-and-forget:
+ * this must never block the UI it's correcting.
+ */
+export async function syncLaneRiskToSupabase(laneId: string, riskScore: number, riskLevel: RiskLevel): Promise<boolean> {
+  const client = getSupabaseClient();
+  if (!client) return false;
+  const { error } = await client.from('transport_lanes').update({ risk_score: riskScore, risk_level: riskLevel }).eq('id', laneId);
+  if (error) {
+    console.warn('transport_lanes risk sync notice:', error.message);
+    return false;
+  }
+  return true;
+}

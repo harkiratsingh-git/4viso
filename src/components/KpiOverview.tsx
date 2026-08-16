@@ -33,7 +33,13 @@ export const KpiOverview: React.FC<KpiOverviewProps> = ({ lanes, summary, onSele
   const highRiskLanes = summary?.highRiskLanes ?? lanes.filter(isLaneHighRisk).length;
   const criticalRiskLanes = lanes.filter(l => getEffectiveRiskLevel(l) === 'Critical').length;
   const avgGdpCompliance = (summary?.avgGdpCompliance ?? (totalLanes > 0 ? lanes.reduce((acc, l) => acc + l.gdpComplianceRate, 0) / totalLanes : 0)).toFixed(1);
-  const tempDeviations = summary?.activeExcursions ?? lanes.filter(isLaneExcursing).length;
+  // dashboard_summary's active_excursions has been verified live to be unreliable — it stays
+  // 0 regardless of risk_level, status, or current_temp on the underlying rows, so unlike the
+  // other cards here it can't be trusted even after reconciling the columns it does read
+  // correctly (see App.tsx's reconcileLaneRiskWithSupabase). Always compute this one straight
+  // from live lane data instead, so it can never again show 0 while the Lane table and map
+  // both show real excursions.
+  const tempDeviations = lanes.filter(isLaneExcursing).length;
   const totalValue = summary?.payloadInTransitUsd ?? lanes.reduce((acc, l) => acc + l.payloadValueUsd, 0);
   const unresolvedCritical = summary?.unresolvedCriticalAlerts ?? criticalRiskLanes;
 

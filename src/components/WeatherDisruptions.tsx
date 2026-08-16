@@ -1,12 +1,14 @@
 import React from 'react';
-import { 
-  CloudLightning, 
-  Anchor, 
-  Wind, 
-  SunMedium, 
-  AlertCircle, 
+import {
+  CloudLightning,
+  Anchor,
+  Wind,
+  SunMedium,
+  AlertCircle,
   ChevronRight,
-  Clock
+  Clock,
+  Route as RouteIcon,
+  CheckCircle2,
 } from 'lucide-react';
 import { WeatherDisruption } from '../types';
 
@@ -31,6 +33,8 @@ export const WeatherDisruptions: React.FC<WeatherDisruptionsProps> = ({
         return <SunMedium className="w-4 h-4 text-orange-400" />;
       case 'Low Visibility':
         return <Wind className="w-4 h-4 text-sky-400" />;
+      case 'Corridor Advisory':
+        return <RouteIcon className="w-4 h-4 text-teal-400" />;
       default:
         return <AlertCircle className="w-4 h-4 text-amber-400" />;
     }
@@ -46,7 +50,11 @@ export const WeatherDisruptions: React.FC<WeatherDisruptionsProps> = ({
           <div>
             <h3 className="text-sm font-bold text-slate-100 flex items-center gap-2">
               Weather & Route Disruption Feed
-              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/30">
+              <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${
+                disruptions.length > 0
+                  ? 'bg-rose-500/20 text-rose-300 border-rose-500/30'
+                  : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+              }`}>
                 {disruptions.length} Active Alerts
               </span>
             </h3>
@@ -57,6 +65,12 @@ export const WeatherDisruptions: React.FC<WeatherDisruptionsProps> = ({
         </div>
       </div>
 
+      {disruptions.length === 0 ? (
+        <div className="flex items-center gap-2 py-4 text-slate-400 text-xs">
+          <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+          <span>No corridor advisories currently affect any active lane's route.</span>
+        </div>
+      ) : (
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
         {disruptions.map((item) => {
           const isSelected = item.affectedLaneCodes.some(code => code === selectedLaneCode);
@@ -110,6 +124,7 @@ export const WeatherDisruptions: React.FC<WeatherDisruptionsProps> = ({
           );
         })}
       </div>
+      )}
     </div>
   );
 };
