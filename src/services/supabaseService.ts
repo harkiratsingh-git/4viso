@@ -1,5 +1,5 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { TransportLane, AlertNotification, AuditLogEntry, SupabaseSettings, SupabaseUser, CloudSyncState, RiskLevel } from '../types';
+import { TransportLane, AlertNotification, AuditLogEntry, SupabaseSettings, SupabaseUser, CloudSyncState, RiskLevel, CorridorAdvisory, Carrier, CarrierPerformanceSummary } from '../types';
 import {
   mapRowToLane,
   mapLaneToRow,
@@ -8,6 +8,9 @@ import {
   mapRowToAuditLog,
   mapAuditLogToRow,
   mapRowToTemperatureReading,
+  mapRowToCorridorAdvisory,
+  mapRowToCarrier,
+  mapRowToCarrierPerformanceSummary,
 } from './supabaseMappers';
 import { PortEntry, mapPortsRowToEntry } from '../utils/ports';
 
@@ -837,3 +840,94 @@ export async function calculateLaneBaseRisk(
   const row = data[0];
   return { riskScore: Number(row.risk_score) || 0, riskLevel: (row.risk_level as RiskLevel) || 'Low' };
 }
+
+// ---------------------------------------------------------------------------
+// Corridor advisories & carriers (route/carrier recommendation engine)
+// ---------------------------------------------------------------------------
+
+export async function fetchCorridorAdvisories(): Promise<CorridorAdvisory[] | null> {
+  const client = getSupabaseClient();
+  if (!client) return null;
+  const { data, error } = await client.from('corridor_advisories').select('*');
+  if (error || !data) {
+    console.warn('corridor_advisories fetch notice (advisory checks skipped):', error?.message);
+    return null;
+  }
+  return data.map(mapRowToCorridorAdvisory);
+}
+
+export async function fetchCarriers(): Promise<Carrier[] | null> {
+  const client = getSupabaseClient();
+  if (!client) return null;
+  const { data, error } = await client.from('carriers').select('*');
+  if (error || !data) {
+    console.warn('carriers fetch notice (carrier recommendation skipped):', error?.message);
+    return null;
+  }
+  return data.map(mapRowToCarrier);
+}
+
+/** From carrier_performance_summary — only ever has rows for carriers with 5+ logged
+ * shipments (see carrier_performance_logs), so an empty/missing result means "no data yet,"
+ * never a fabricated 0%. Returns null (not []) if the view itself isn't reachable, so callers
+ * can tell "no data" apart from "couldn't check." */
+export async function fetchCarrierPerformanceSummary(): Promise<CarrierPerformanceSummary[] | null> {
+  const client = getSupabaseClient();
+  if (!client) return null;
+  const { data, error } = await client.from('carrier_performance_summary').select('*');
+  if (error || !data) {
+    console.warn('carrier_performance_summary fetch notice (falling back to static reliability_score only):', error?.message);
+    return null;
+  }
+  return data.map(mapRowToCarrierPerformanceSummary);
+}
+
+/**
+ * Writes a single audit_trail row live, as it happens — not just to local React state. Used
+ * for GDP-relevant events (recommendation overrides especially) where "the UI showed it in the
+ * audit log" isn't sufficient; it needs to actually be in the database. Fire-and-forget by
+ * design (returns success/failure but callers shouldn't block user flow on it) since audit
+ * logging must never be able to block a user action — see the override-acknowledgment flow.
+ */
+export async function insertAuditLogEntry(log: AuditLogEntry): Promise<boolean> {
+  const client = getSupabaseClient();
+  if (!client) return false;
+  const { error } = await client.from('audit_trail').insert(mapAuditLogToRow(log));
+  if (error) {
+    console.warn('audit_trail insert notice:', error.message);
+    return false;
+  }
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// Conversational assistant deployment instructions (shown in Settings -> Supabase Cloud
+// Database, next to the SQL migration box). The assistant is a Supabase Edge Function that
+// holds the Anthropic API key server-side — the browser (and this anon key) never sees it, so
+// it can only be deployed with real Supabase CLI / dashboard access, not from inside the app.
+// ---------------------------------------------------------------------------
+
+export const ASSISTANT_DEPLOYMENT_STEPS = `# Deploy the PharmaTrack conversational assistant
+# Source: supabase/functions/assistant/ in this project's repo
+
+# 1. Install the Supabase CLI if you don't have it
+brew install supabase/tap/supabase   # or see https://supabase.com/docs/guides/cli
+
+# 2. Log in and link this project (find the ref in your Supabase dashboard URL)
+supabase login
+supabase link --project-ref bizsmdoblqmkxybnppyw
+
+# 3. Create a private Storage bucket named "reports" for generated .docx files
+#    Dashboard -> Storage -> New Bucket -> name "reports", Public = OFF
+#    (bucket creation needs the dashboard or a service-role key, not the anon key)
+
+# 4. Set your Anthropic API key as a secret - never committed, never sent to the browser
+supabase secrets set ANTHROPIC_API_KEY=sk-ant-...
+
+# 5. Deploy
+supabase functions deploy assistant
+
+# SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are injected automatically by the platform -
+# nothing else to configure. The frontend chat panel calls this function automatically once
+# it's deployed; until then it shows a clear "assistant isn't reachable yet" message instead
+# of failing silently.`;

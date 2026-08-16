@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   X,
   Plane,
@@ -16,7 +16,7 @@ import {
   Route as RouteIcon,
   BadgeCheck,
 } from 'lucide-react';
-import { TransportLane, TransportMode, TemperatureRangeType, RiskFactor, RouteStop } from '../types';
+import { TransportLane, TransportMode, TemperatureRangeType, RiskFactor, RouteStop, Carrier, CorridorAdvisory, AuditLogEntry, CarrierPerformanceSummary } from '../types';
 import { getAirportCoords } from '../utils/geo';
 import { assessRoute } from '../utils/riskAssessment';
 import { recommendTransportMode, recommendStops } from '../utils/ports';
@@ -24,15 +24,19 @@ import { computeRouteMetrics, stopSetsDiffer } from '../utils/routeComparison';
 import { alongTrackDistanceKm } from '../utils/geoMath';
 import { getRiskColor } from '../utils/formatters';
 import { formatUtcCompactNoSeconds } from '../utils/dateFormat';
-import { calculateLaneBaseRisk, LaneBaseRisk } from '../services/supabaseService';
+import { calculateLaneBaseRisk, LaneBaseRisk, fetchCarriers, fetchCorridorAdvisories, fetchCarrierPerformanceSummary } from '../services/supabaseService';
+import { recommendCarrier, explainTopPick } from '../utils/carrierRecommendation';
+import { findRelevantAdvisories, RelevantAdvisory, STALENESS_WARNING_PREFIX, requiresAcknowledgment } from '../utils/corridorAdvisories';
 import { AirportAutocomplete, AirportValue } from './AirportAutocomplete';
 import { RouteStopsEditor, DraftStop } from './RouteStopsEditor';
 import { usePorts } from '../contexts/PortsContext';
+import { OverrideAcknowledgmentModal, PendingOverride } from './OverrideAcknowledgmentModal';
 
 interface NewLaneWizardModalProps {
   onClose: () => void;
   onCreateLane: (newLane: TransportLane) => void;
   onViewLane: (lane: TransportLane) => void;
+  onLogAuditEntry: (laneCode: string, action: string, category: AuditLogEntry['category'], details: string) => void;
 }
 
 interface RouteOptionCardProps {
@@ -130,10 +134,23 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
   onClose,
   onCreateLane,
   onViewLane,
+  onLogAuditEntry,
 }) => {
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
   const [createdLane, setCreatedLane] = useState<TransportLane | null>(null);
   const { ports } = usePorts();
+
+  // Carrier recommendation + corridor advisory data, fetched once on mount.
+  const [carriers, setCarriers] = useState<Carrier[]>([]);
+  const [advisories, setAdvisories] = useState<CorridorAdvisory[]>([]);
+  const [performanceByCarrierId, setPerformanceByCarrierId] = useState<Map<string, CarrierPerformanceSummary>>(new Map());
+  useEffect(() => {
+    fetchCarriers().then((c) => c && setCarriers(c));
+    fetchCorridorAdvisories().then((a) => a && setAdvisories(a));
+    fetchCarrierPerformanceSummary().then((rows) => {
+      if (rows) setPerformanceByCarrierId(new Map(rows.map((r) => [r.carrierId, r])));
+    });
+  }, []);
 
   // Step 1: Mode
   const [mode, setMode] = useState<TransportMode>('Air');
@@ -283,6 +300,84 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
     setComparisonChoice('used');
   };
 
+  // Carrier recommendation: weighted, with visible reasoning — advisory only, never forced.
+  const carrierRecommendations = useMemo(
+    () => recommendCarrier(carriers, mode, tempRangeType, origin.country, destination.country, 4, performanceByCarrierId),
+    [carriers, mode, tempRangeType, origin.country, destination.country, performanceByCarrierId]
+  );
+  const topCarrierPick = carrierRecommendations[0] || null;
+  const carrierRunnerUpExplanation = explainTopPick(carrierRecommendations);
+
+  // Auto-fill the carrier field with the top pick the first time real carrier data loads, but
+  // never fight the user's own choice after that.
+  const hasAutoSelectedCarrier = useRef(false);
+  useEffect(() => {
+    if (!hasAutoSelectedCarrier.current && topCarrierPick) {
+      setCarrier(topCarrierPick.carrier.name);
+      hasAutoSelectedCarrier.current = true;
+    }
+  }, [topCarrierPick]);
+
+  // Corridor advisories relevant to the drafted route (Sea mode only — see corridorAdvisories.ts).
+  const relevantAdvisories: RelevantAdvisory[] = useMemo(() => {
+    if (!origin.iata.trim() || !destination.iata.trim()) return [];
+    return findRelevantAdvisories(advisories, origin.coords, destination.coords, mode);
+  }, [advisories, origin, destination, mode]);
+  const severeAdvisories = relevantAdvisories.filter((r) => requiresAcknowledgment(r.advisory.severity));
+
+  // Every recommendation set aside — route, carrier, or corridor advisory — collected into one
+  // acknowledgment gate at creation time rather than nagging on every intermediate change.
+  const pendingOverrides: PendingOverride[] = useMemo(() => {
+    const overrides: PendingOverride[] = [];
+    if (showComparisonGate && comparisonChoice === 'kept') {
+      overrides.push({
+        what: 'route recommendation',
+        recommended: `Suggested alternative via ${suggestedStops.map((s) => s.port.code).join(', ') || 'direct'}`,
+        chosen: `Your route via ${userStops.map((s) => s.iata).join(', ') || 'direct'}`,
+      });
+    }
+    if (topCarrierPick && carrier !== topCarrierPick.carrier.name) {
+      overrides.push({
+        what: 'carrier recommendation',
+        recommended: `${topCarrierPick.carrier.name} (score ${topCarrierPick.score}/100)`,
+        chosen: carrier,
+      });
+    }
+    if (severeAdvisories.length > 0) {
+      const a = severeAdvisories[0].advisory;
+      overrides.push({
+        what: `${a.corridorName} corridor advisory (${a.severity})`,
+        recommended: a.recommendedAlternative,
+        chosen: `${mode} routing through the flagged corridor`,
+      });
+    }
+    return overrides;
+  }, [showComparisonGate, comparisonChoice, suggestedStops, userStops, topCarrierPick, carrier, severeAdvisories, mode]);
+
+  const [isOverrideModalOpen, setIsOverrideModalOpen] = useState(false);
+
+  const confirmOverridesAndFinish = (reason: string) => {
+    const laneCodePreview = `${origin.iata.toUpperCase()}-${destination.iata.toUpperCase()}`;
+    for (const o of pendingOverrides) {
+      onLogAuditEntry(
+        laneCodePreview,
+        `Recommendation Overridden: ${o.what}`,
+        'RISK_OVERRIDE',
+        `Proceeded with "${o.chosen}" instead of the recommended "${o.recommended}".${reason ? ` Reason given: ${reason}` : ' No reason given.'}`
+      );
+    }
+    setIsOverrideModalOpen(false);
+    handleFinish();
+  };
+
+  const handleCreateLaneClick = () => {
+    if (pendingOverrides.length > 0) {
+      setIsOverrideModalOpen(true);
+    } else {
+      handleFinish();
+    }
+  };
+
   const handleFinish = () => {
     const laneCode = `${origin.iata.toUpperCase()}-${destination.iata.toUpperCase()}-${Math.floor(10 + Math.random() * 89)}`;
     const initTemp = Number(((tempMin + tempMax) / 2 + 0.2).toFixed(1));
@@ -372,6 +467,7 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
       destinationCoords: destination.coords,
       stops: routeStops,
       carrier,
+      carrierId: carriers.find((c) => c.name === carrier || c.name.toLowerCase() === carrier.toLowerCase())?.id,
       mode,
       productName,
       productCategory,
@@ -649,14 +745,43 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
                     onChange={(e) => setCarrier(e.target.value)}
                     className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-100"
                   >
-                    <option value="DHL Express">DHL Express Pharma Gold</option>
-                    <option value="Lufthansa Cargo">Lufthansa Cargo Pharma Special</option>
-                    <option value="Maersk Line">Maersk Line StarCare Reefer</option>
-                    <option value="Emirates SkyCargo">Emirates SkyCargo Pharma</option>
-                    <option value="Swiss WorldCargo">Swiss WorldCargo Pharma</option>
-                    <option value="FedEx Custom Critical">FedEx Custom Critical Thermal</option>
-                    <option value="Cargolux">Cargolux CV Pharma</option>
+                    {carrierRecommendations.length > 0 ? (
+                      carrierRecommendations.map((c) => (
+                        <option key={c.carrier.id} value={c.carrier.name}>
+                          {c.carrier.name} — score {c.score}/100
+                        </option>
+                      ))
+                    ) : (
+                      <>
+                        <option value="DHL Express">DHL Express Pharma Gold</option>
+                        <option value="Lufthansa Cargo">Lufthansa Cargo Pharma Special</option>
+                        <option value="Maersk Line">Maersk Line StarCare Reefer</option>
+                        <option value="Emirates SkyCargo">Emirates SkyCargo Pharma</option>
+                        <option value="Swiss WorldCargo">Swiss WorldCargo Pharma</option>
+                        <option value="FedEx Custom Critical">FedEx Custom Critical Thermal</option>
+                        <option value="Cargolux">Cargolux CV Pharma</option>
+                      </>
+                    )}
                   </select>
+                  {topCarrierPick && (
+                    <div className="mt-1.5 p-2 rounded-lg bg-teal-500/10 border border-teal-500/25 flex items-start gap-1.5">
+                      <Sparkles className="w-3 h-3 text-teal-400 flex-shrink-0 mt-0.5" />
+                      <div className="text-[11px] text-slate-300 leading-relaxed min-w-0">
+                        <span className="font-bold text-teal-300">Recommended: {topCarrierPick.carrier.name}</span>
+                        {carrier !== topCarrierPick.carrier.name && (
+                          <button
+                            type="button"
+                            onClick={() => setCarrier(topCarrierPick.carrier.name)}
+                            className="ml-1.5 text-[10px] font-semibold text-teal-400 hover:text-teal-300 underline"
+                          >
+                            Use this
+                          </button>
+                        )}
+                        <div className="text-slate-400">{topCarrierPick.reasons.join(' · ')}</div>
+                        {carrierRunnerUpExplanation && <div className="text-slate-500 mt-0.5 italic">{carrierRunnerUpExplanation}</div>}
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <div>
@@ -702,6 +827,36 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
                     ))}
                   </div>
                 </div>
+
+                {relevantAdvisories.length > 0 && (
+                  <div className="sm:col-span-2 space-y-2">
+                    {relevantAdvisories.map((r) => (
+                      <div
+                        key={r.advisory.id}
+                        className={`p-3 rounded-xl border ${
+                          r.advisory.severity === 'Avoid' ? 'bg-rose-950/30 border-rose-800/50' : 'bg-amber-950/25 border-amber-800/50'
+                        }`}
+                      >
+                        <div className="flex items-start gap-2">
+                          <AlertTriangle className={`w-4 h-4 flex-shrink-0 mt-0.5 ${r.advisory.severity === 'Avoid' ? 'text-rose-400' : 'text-amber-400'}`} />
+                          <div className="min-w-0 text-[11px] leading-relaxed">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className={`font-bold ${r.advisory.severity === 'Avoid' ? 'text-rose-300' : 'text-amber-300'}`}>
+                                {r.advisory.corridorName} — {r.advisory.severity}
+                              </span>
+                              <span className="text-slate-500 font-mono">as of {r.advisory.asOf}</span>
+                            </div>
+                            {r.isStale && (
+                              <p className="text-amber-400 font-semibold mt-1">{STALENESS_WARNING_PREFIX}</p>
+                            )}
+                            <p className="text-slate-300 mt-1">{r.advisory.summary}</p>
+                            <p className="text-teal-300 mt-1"><strong>Recommended alternative:</strong> {r.advisory.recommendedAlternative}</p>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
 
               </div>
             </div>
@@ -1105,7 +1260,7 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
             </button>
           ) : (
             <button
-              onClick={handleFinish}
+              onClick={handleCreateLaneClick}
               className="flex items-center gap-1.5 px-5 py-2 rounded-lg bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-bold shadow-lg transition-all"
             >
               <Check className="w-4 h-4" />
@@ -1114,6 +1269,14 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
           )}
         </div>
         </>
+        )}
+
+        {isOverrideModalOpen && (
+          <OverrideAcknowledgmentModal
+            overrides={pendingOverrides}
+            onCancel={() => setIsOverrideModalOpen(false)}
+            onConfirm={confirmOverridesAndFinish}
+          />
         )}
 
       </div>

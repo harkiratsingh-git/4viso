@@ -26,6 +26,8 @@ import {
   Flame,
   Clock,
   Sparkles,
+  Radio,
+  AlertTriangle,
   Server,
   Cloud,
   FileText
@@ -38,12 +40,13 @@ import {
   AlertNotification, 
   AuditLogEntry 
 } from '../types';
-import { 
-  getSavedSupabaseConfig, 
-  saveSupabaseConfig, 
-  testSupabaseConnection, 
-  syncAllToSupabase, 
-  SUPABASE_SQL_MIGRATION 
+import {
+  getSavedSupabaseConfig,
+  saveSupabaseConfig,
+  testSupabaseConnection,
+  syncAllToSupabase,
+  SUPABASE_SQL_MIGRATION,
+  ASSISTANT_DEPLOYMENT_STEPS,
 } from '../services/supabaseService';
 
 interface SettingsPageProps {
@@ -56,6 +59,9 @@ interface SettingsPageProps {
   auditLogs: AuditLogEntry[];
   onResetData: () => void;
   onOpenLogin: () => void;
+  isSimulating: boolean;
+  onToggleSimulation: () => void;
+  onTriggerSimulatedExcursion: () => void;
 }
 
 export const SettingsPage: React.FC<SettingsPageProps> = ({
@@ -67,7 +73,10 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   alerts,
   auditLogs,
   onResetData,
-  onOpenLogin
+  onOpenLogin,
+  isSimulating,
+  onToggleSimulation,
+  onTriggerSimulatedExcursion,
 }) => {
   const [activeTab, setActiveTab] = useState<'GENERAL' | 'SUPABASE' | 'GITHUB' | 'COMPLIANCE' | 'NOTIFICATIONS' | 'BACKUP'>('GENERAL');
   
@@ -152,6 +161,13 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     navigator.clipboard.writeText(SUPABASE_SQL_MIGRATION);
     setCopiedSql(true);
     setTimeout(() => setCopiedSql(false), 2500);
+  };
+
+  const [copiedAssistantSteps, setCopiedAssistantSteps] = useState<boolean>(false);
+  const handleCopyAssistantSteps = () => {
+    navigator.clipboard.writeText(ASSISTANT_DEPLOYMENT_STEPS);
+    setCopiedAssistantSteps(true);
+    setTimeout(() => setCopiedAssistantSteps(false), 2500);
   };
 
   // Test Webhook Dispatcher
@@ -567,6 +583,33 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
               {SUPABASE_SQL_MIGRATION}
             </pre>
           </div>
+
+          {/* Conversational Assistant Deployment */}
+          <div className="bg-slate-950 p-5 rounded-xl border border-slate-800">
+            <div className="flex items-center justify-between gap-3 mb-2">
+              <div>
+                <h3 className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
+                  <Terminal className="w-4 h-4 text-teal-400" />
+                  Deploy the Conversational Assistant
+                </h3>
+                <p className="text-[11px] text-slate-400">
+                  A Supabase Edge Function holds the Anthropic API key server-side and powers the chat panel — it needs to be deployed separately from the app itself, with real Supabase CLI access.
+                </p>
+              </div>
+
+              <button
+                onClick={handleCopyAssistantSteps}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-teal-300 text-xs font-semibold border border-slate-700 transition-colors flex-shrink-0"
+              >
+                {copiedAssistantSteps ? <Check className="w-3.5 h-3.5 text-teal-400" /> : <Copy className="w-3.5 h-3.5 text-teal-400" />}
+                <span>{copiedAssistantSteps ? 'Copied!' : 'Copy Steps'}</span>
+              </button>
+            </div>
+
+            <pre className="bg-slate-900/90 border border-slate-800 rounded-lg p-3 text-[11px] font-mono text-slate-300 max-h-48 overflow-y-auto leading-relaxed select-all">
+              {ASSISTANT_DEPLOYMENT_STEPS}
+            </pre>
+          </div>
         </div>
       )}
 
@@ -920,6 +963,41 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                   <RefreshCw className="w-4 h-4" />
                   <span>Reset to Factory Defaults</span>
                 </button>
+              </div>
+
+              <div className="p-4 rounded-xl bg-slate-900 border border-slate-800 flex flex-col justify-between sm:col-span-2">
+                <div>
+                  <h3 className="text-xs font-bold text-white mb-1 flex items-center gap-1.5">
+                    <Radio className={`w-3.5 h-3.5 ${isSimulating ? 'text-emerald-400' : 'text-slate-400'}`} />
+                    IoT Telemetry Simulation (Local Demo Mode Only)
+                  </h3>
+                  <p className="text-[11px] text-slate-400 mb-3">
+                    Controls the local mock sensor feed used when not connected to Supabase Realtime. Trigger an excursion to preview how alerts and dashboard widgets respond.
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={onToggleSimulation}
+                    className={`py-2 px-3 rounded-lg font-bold text-xs transition-colors flex items-center justify-center gap-2 ${
+                      isSimulating
+                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/30'
+                        : 'bg-slate-800 text-slate-300 border border-slate-700 hover:bg-slate-700'
+                    }`}
+                  >
+                    <Radio className={`w-4 h-4 ${isSimulating ? 'animate-pulse' : ''}`} />
+                    <span>{isSimulating ? 'Pause Telemetry Stream' : 'Resume Telemetry Stream'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onTriggerSimulatedExcursion}
+                    className="py-2 px-3 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/20 font-bold text-xs transition-colors flex items-center justify-center gap-2"
+                    title="Demo/test control — injects a fake excursion, does not represent a real alert"
+                  >
+                    <AlertTriangle className="w-4 h-4" />
+                    <span>Inject Simulated Excursion</span>
+                  </button>
+                </div>
               </div>
             </div>
           </div>

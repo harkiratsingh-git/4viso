@@ -8,6 +8,53 @@ export type RiskLevel = 'Low' | 'Medium' | 'High' | 'Critical';
 
 export type TemperatureRangeType = '2°C to 8°C (Cold Chain)' | '-20°C (Deep Freeze)' | '-80°C (Cryogenic)' | '15°C to 25°C (Controlled Room Temp)';
 
+export type AdvisorySeverity = 'Informational' | 'Advisory' | 'Elevated Risk' | 'Avoid';
+
+export interface CorridorAdvisory {
+  id: string;
+  corridorName: string;
+  affectedWaypoints: string[];
+  severity: AdvisorySeverity;
+  summary: string;
+  recommendedAlternative: string;
+  asOf: string;
+  sourceNote: string;
+}
+
+export type CarrierType = 'Ocean Line' | 'Air Cargo/Integrator' | 'Freight Forwarder/3PL' | 'Regional Specialist';
+
+export interface Carrier {
+  id: string;
+  name: string;
+  carrierType: CarrierType;
+  /** Raw mode strings from the DB — includes values like 'Rail' that fall outside this app's TransportMode union, so kept as string[] rather than forcing a mismatch. */
+  modes: string[];
+  headquartersCountry: string;
+  primaryRegions: string[];
+  ceivPharmaPartner: boolean;
+  ownsDedicatedNetwork: boolean;
+  reliabilityScore: number;
+  coldChainSpecialist: boolean;
+  notes: string;
+}
+
+export interface CarrierRecommendation {
+  carrier: Carrier;
+  score: number;
+  reasons: string[];
+}
+
+/** From the carrier_performance_summary view — only ever returns a row once a carrier has at
+ * least 5 logged shipments (see carrier_performance_logs), specifically so the app never shows
+ * a fabricated-precision rate from a tiny sample. Absence of a row means "no data yet," not 0%. */
+export interface CarrierPerformanceSummary {
+  carrierId: string;
+  shipmentCount: number;
+  onTimePct: number;
+  excursionRatePct: number;
+  claimRatePct: number;
+}
+
 export interface RouteStop {
   id: string;
   sequence: number; // 1-based order between origin and destination
@@ -59,6 +106,8 @@ export interface TransportLane {
   destinationCoords: [number, number]; // [lat, lng]
   stops: RouteStop[]; // intermediate waypoints between origin and destination, in sequence order
   carrier: string;
+  /** FK into carriers.id — optional since older rows/local demo data may not have one. */
+  carrierId?: string;
   carrierLogo?: string;
   mode: TransportMode;
   productName: string;

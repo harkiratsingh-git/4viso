@@ -10,6 +10,7 @@ import {
   ShieldCheck,
   ScrollText,
   CornerDownLeft,
+  Bot,
 } from 'lucide-react';
 import { TransportLane } from '../types';
 
@@ -22,6 +23,7 @@ interface CommandPaletteProps {
   onOpenAlerts: () => void;
   onOpenSettings: () => void;
   onSwitchTab: (tab: 'DASHBOARD' | 'LANES' | 'COMPLIANCE' | 'AUDIT_LOGS' | 'SETTINGS') => void;
+  onOpenAssistant: () => void;
 }
 
 interface PaletteItem {
@@ -41,6 +43,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
   onOpenAlerts,
   onOpenSettings,
   onSwitchTab,
+  onOpenAssistant,
 }) => {
   const [query, setQuery] = useState('');
   const [highlighted, setHighlighted] = useState(0);
@@ -57,6 +60,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
 
   const actionItems: PaletteItem[] = useMemo(
     () => [
+      { id: 'open-assistant', icon: <Bot className="w-4 h-4 text-teal-400" />, label: 'Ask the PharmaTrack Assistant', run: onOpenAssistant },
       { id: 'create-lane', icon: <PlusCircle className="w-4 h-4 text-emerald-400" />, label: 'Create New Lane', run: onCreateLane },
       { id: 'open-alerts', icon: <BellRing className="w-4 h-4 text-rose-400" />, label: 'Open Alert Center', run: onOpenAlerts },
       { id: 'open-settings', icon: <SettingsIcon className="w-4 h-4 text-slate-400" />, label: 'Open Settings & Integrations', run: onOpenSettings },
@@ -65,7 +69,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
       { id: 'tab-compliance', icon: <ShieldCheck className="w-4 h-4 text-emerald-400" />, label: 'Go to GDP Compliance Trends', run: () => onSwitchTab('COMPLIANCE') },
       { id: 'tab-audit', icon: <ScrollText className="w-4 h-4 text-cyan-400" />, label: 'Go to Immutable Audit Trail', run: () => onSwitchTab('AUDIT_LOGS') },
     ],
-    [onCreateLane, onOpenAlerts, onOpenSettings, onSwitchTab]
+    [onCreateLane, onOpenAlerts, onOpenSettings, onSwitchTab, onOpenAssistant]
   );
 
   const laneItems: PaletteItem[] = useMemo(

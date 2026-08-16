@@ -14,6 +14,10 @@ import {
   GdpStatus,
   RiskLevel,
   TemperatureRangeType,
+  CorridorAdvisory,
+  AdvisorySeverity,
+  Carrier,
+  CarrierPerformanceSummary,
 } from '../types';
 import { formatUtcCompact } from '../utils/dateFormat';
 
@@ -164,6 +168,7 @@ export function mapRowToLane(row: any, telemetryHistory: TemperatureReading[] = 
     destinationCoords: [n(row.destination_lat), n(row.destination_lng)],
     stops,
     carrier: s(row.carrier) || 'Unassigned Carrier',
+    carrierId: row.carrier_id ? s(row.carrier_id) : undefined,
     mode: normalizeMode(row.mode),
     productName: s(row.product_name) || 'Unspecified Payload',
     productCategory: normalizeProductCategory(row.product_category),
@@ -214,6 +219,7 @@ export function mapLaneToRow(lane: TransportLane, timestamp: string) {
     destination_lng: lane.destinationCoords[1],
     stops: lane.stops,
     carrier: lane.carrier,
+    carrier_id: lane.carrierId ?? null,
     mode: lane.mode,
     product_name: lane.productName,
     product_category: lane.productCategory,
@@ -338,5 +344,54 @@ export function mapRowToTemperatureReading(row: any): TemperatureReading {
     batteryLevel: n(row.battery_level, 90),
     shockG: n(row.shock_g, 0.1),
     isExcursion: Boolean(row.is_excursion),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Corridor advisories & carriers (route/carrier recommendation engine)
+// ---------------------------------------------------------------------------
+
+function normalizeAdvisorySeverity(val: unknown): AdvisorySeverity {
+  const raw = s(val);
+  if (raw === 'Elevated Risk' || raw === 'Avoid' || raw === 'Advisory' || raw === 'Informational') return raw;
+  return 'Informational';
+}
+
+export function mapRowToCorridorAdvisory(row: any): CorridorAdvisory {
+  return {
+    id: s(row.id),
+    corridorName: s(row.corridor_name),
+    affectedWaypoints: Array.isArray(row.affected_waypoints) ? row.affected_waypoints.map(s) : [],
+    severity: normalizeAdvisorySeverity(row.severity),
+    summary: s(row.summary),
+    recommendedAlternative: s(row.recommended_alternative),
+    asOf: s(row.as_of),
+    sourceNote: s(row.source_note),
+  };
+}
+
+export function mapRowToCarrier(row: any): Carrier {
+  return {
+    id: s(row.id),
+    name: s(row.name),
+    carrierType: s(row.carrier_type) as Carrier['carrierType'],
+    modes: Array.isArray(row.modes) ? row.modes.map(s) : [],
+    headquartersCountry: s(row.headquarters_country),
+    primaryRegions: Array.isArray(row.primary_regions) ? row.primary_regions.map(s) : [],
+    ceivPharmaPartner: Boolean(row.ceiv_pharma_partner),
+    ownsDedicatedNetwork: Boolean(row.owns_dedicated_network),
+    reliabilityScore: n(row.reliability_score),
+    coldChainSpecialist: Boolean(row.cold_chain_specialist),
+    notes: s(row.notes),
+  };
+}
+
+export function mapRowToCarrierPerformanceSummary(row: any): CarrierPerformanceSummary {
+  return {
+    carrierId: s(row.carrier_id),
+    shipmentCount: n(row.shipment_count),
+    onTimePct: n(row.on_time_pct),
+    excursionRatePct: n(row.excursion_rate_pct),
+    claimRatePct: n(row.claim_rate_pct),
   };
 }

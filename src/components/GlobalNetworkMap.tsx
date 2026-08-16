@@ -1,8 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   Globe2,
   Layers,
-  Flame
+  Flame,
+  Filter,
+  Settings2,
 } from 'lucide-react';
 import { TransportLane } from '../types';
 import { RegionalTemperatureHeatmapView } from './RegionalTemperatureHeatmapView';
@@ -22,6 +24,18 @@ export const GlobalNetworkMap: React.FC<GlobalNetworkMapProps> = ({
 }) => {
   const [activeSubView, setActiveSubView] = useState<'CORRIDORS' | 'HEATMAP'>('HEATMAP');
   const [filterMode, setFilterMode] = useState<'ALL' | 'AIR' | 'SEA' | 'ROAD' | 'ALERTS'>('ALL');
+  const [showCorridorFilterPopover, setShowCorridorFilterPopover] = useState(false);
+  const corridorPopoverRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (corridorPopoverRef.current && !corridorPopoverRef.current.contains(e.target as Node)) {
+        setShowCorridorFilterPopover(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   const visibleLanes = lanes.filter(l => {
     if (filterMode === 'AIR') return l.mode === 'Air';
@@ -92,44 +106,40 @@ export const GlobalNetworkMap: React.FC<GlobalNetworkMapProps> = ({
 
       {/* SUB-VIEW 2: REAL-WORLD GEOGRAPHIC MAP */}
       {activeSubView === 'CORRIDORS' && (
-        <div>
-          {/* Mode Filters Bar */}
-          <div className="flex items-center justify-between mb-3 bg-slate-950 p-2 rounded-lg border border-slate-800 text-xs">
-            <div className="flex items-center gap-1.5">
-              <span className="text-slate-400 font-medium mr-1">Corridor Filter:</span>
-              <button
-                onClick={() => setFilterMode('ALL')}
-                className={`px-2.5 py-1 rounded font-medium transition-all ${
-                  filterMode === 'ALL' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                All Corridors ({lanes.length})
-              </button>
-              <button
-                onClick={() => setFilterMode('AIR')}
-                className={`px-2.5 py-1 rounded font-medium transition-all ${
-                  filterMode === 'AIR' ? 'bg-sky-500/20 text-sky-300 border border-sky-500/30' : 'text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                Air (✈️)
-              </button>
-              <button
-                onClick={() => setFilterMode('SEA')}
-                className={`px-2.5 py-1 rounded font-medium transition-all ${
-                  filterMode === 'SEA' ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30' : 'text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                Sea (🚢)
-              </button>
-              <button
-                onClick={() => setFilterMode('ALERTS')}
-                className={`px-2.5 py-1 rounded font-medium transition-all ${
-                  filterMode === 'ALERTS' ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30' : 'text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                Alerts Only (⚠️)
-              </button>
-            </div>
+        <div className="relative">
+          {/* Single floating filter card (top-left, the only free corner — WorldRouteMap owns
+              the other three) replaces what used to be a permanent filter bar above the map. */}
+          <div ref={corridorPopoverRef} className="absolute top-3 left-3 z-20">
+            {showCorridorFilterPopover && (
+              <div className="absolute top-full left-0 mt-2 w-56 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl p-2 text-xs space-y-1 animate-in fade-in zoom-in-95 duration-100">
+                {([
+                  ['ALL', `All Corridors (${lanes.length})`],
+                  ['AIR', 'Air (✈️)'],
+                  ['SEA', 'Sea (🚢)'],
+                  ['ALERTS', 'Alerts Only (⚠️)'],
+                ] as const).map(([mode, label]) => (
+                  <button
+                    key={mode}
+                    onClick={() => setFilterMode(mode)}
+                    className={`w-full text-left px-2.5 py-1.5 rounded font-medium transition-all ${
+                      filterMode === mode ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            <button
+              onClick={() => setShowCorridorFilterPopover((v) => !v)}
+              className="flex items-center gap-1.5 bg-slate-900/90 backdrop-blur-md border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-300 shadow-xl hover:border-slate-600 transition-colors"
+            >
+              <Filter className="w-3.5 h-3.5 text-teal-400" />
+              <span className="font-bold text-slate-100">{visibleLanes.length}</span>
+              <span className="text-slate-500">/ {lanes.length} corridors</span>
+              <Settings2 className="w-3.5 h-3.5 text-slate-400 ml-1" />
+            </button>
           </div>
 
           <WorldRouteMap lanes={visibleLanes} selectedLaneId={selectedLaneId} onSelectLane={onSelectLane} />

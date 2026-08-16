@@ -16,7 +16,8 @@ import {
   SystemSettings,
   SupabaseUser
 } from './types';
-import { Header, USER_ROLES } from './components/Header';
+import { Sidebar, USER_ROLES, AppTab } from './components/Sidebar';
+import { TopBar } from './components/TopBar';
 import { KpiOverview } from './components/KpiOverview';
 import { GlobalNetworkMap } from './components/GlobalNetworkMap';
 import { WeatherDisruptions } from './components/WeatherDisruptions';
@@ -32,6 +33,7 @@ import { formatUtcCompact, formatUtcCompactNoSeconds } from './utils/dateFormat'
 import { TemperatureMonitoringSystem } from './components/TemperatureMonitoringSystem';
 import { NewLaneWizardModal } from './components/NewLaneWizardModal';
 import { CommandPalette } from './components/CommandPalette';
+import { ChatAssistant } from './components/ChatAssistant';
 import { RealTimeAlertsCenter } from './components/RealTimeAlertsCenter';
 import { GdpComplianceTrend } from './components/GdpComplianceTrend';
 import { AuditTrailView } from './components/AuditTrailView';
@@ -39,19 +41,21 @@ import { AutomatedReportingModal } from './components/AutomatedReportingModal';
 import { SupabaseSyncModal } from './components/SupabaseSyncModal';
 import { SettingsPage } from './components/SettingsPage';
 import { LoginPage } from './components/LoginPage';
-import { getActiveUser, setActiveUser as persistActiveUser, DEFAULT_SUPABASE_USER, fetchAllFromSupabase, restoreSupabaseSession, signOutFromSupabase, fetchDashboardSummary, DashboardSummary, getSupabaseClient, searchLanesRemote } from './services/supabaseService';
+import { getActiveUser, setActiveUser as persistActiveUser, DEFAULT_SUPABASE_USER, fetchAllFromSupabase, restoreSupabaseSession, signOutFromSupabase, fetchDashboardSummary, DashboardSummary, getSupabaseClient, searchLanesRemote, insertAuditLogEntry } from './services/supabaseService';
 import { mapRowToTemperatureReading, mapRowToAlert } from './services/supabaseMappers';
-import { 
-  LayoutDashboard, 
-  Layers, 
-  ShieldCheck, 
-  History, 
-  Activity, 
+import {
+  ShieldCheck,
   AlertTriangle,
-  FileText,
-  Settings as SettingsNavIcon,
-  UserCheck
 } from 'lucide-react';
+
+const PAGE_NAMES: Record<AppTab, string> = {
+  DASHBOARD: 'Global Dashboard',
+  LANES: 'Lane Risk Management',
+  COMPLIANCE: 'GDP Compliance Trends',
+  AUDIT_LOGS: 'Immutable Audit Trail',
+  SETTINGS: 'Settings & Integrations',
+  LOGIN: 'Sign In / Personas',
+};
 
 const DEFAULT_SETTINGS: SystemSettings = {
   mktActivationEnergy: 83.144, // USP standard kJ/mol
@@ -90,7 +94,8 @@ export default function App() {
     const usr = getActiveUser();
     return USER_ROLES.find(r => r.title.toLowerCase().includes(usr.role.toLowerCase().slice(0, 4))) || USER_ROLES[0];
   });
-  const [activeTab, setActiveTab] = useState<'DASHBOARD' | 'LANES' | 'COMPLIANCE' | 'AUDIT_LOGS' | 'SETTINGS' | 'LOGIN'>('DASHBOARD');
+  const [activeTab, setActiveTab] = useState<AppTab>('DASHBOARD');
+  const [isMobileNavOpen, setIsMobileNavOpen] = useState<boolean>(false);
   
   const [filters, setFilters] = useState<FilterState>({
     searchQuery: '',
@@ -113,6 +118,7 @@ export default function App() {
   const [isAlertsCenterOpen, setIsAlertsCenterOpen] = useState<boolean>(false);
   const [isCloudSyncOpen, setIsCloudSyncOpen] = useState<boolean>(false);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState<boolean>(false);
+  const [isChatAssistantOpen, setIsChatAssistantOpen] = useState<boolean>(false);
 
   // Simulation engine state
   const [isSimulating, setIsSimulating] = useState<boolean>(true);
@@ -321,6 +327,12 @@ export default function App() {
       status: 'VERIFIED',
     };
     setAuditLogs(prev => [newLog, ...prev]);
+    // Write live too, not just local state — a GDP audit trail that only exists in memory
+    // until the next manual "sync to cloud" click isn't a real audit trail. Fire-and-forget:
+    // this must never block or fail the action it's recording.
+    if (dataSource === 'cloud') {
+      insertAuditLogEntry(newLog).catch(() => {});
+    }
   };
 
   // Update Settings handler
@@ -376,6 +388,22 @@ export default function App() {
       'LANE_CONFIGURATION',
       `Provisioned ${newLane.mode} lane ${newLane.laneCode} with threshold alert boundaries (${newLane.tempMin}°C - ${newLane.tempMax}°C).`
     );
+  };
+
+  // A lane created via the chat assistant is inserted directly into Supabase by the Edge
+  // Function, bypassing local state entirely — refetch before trying to open it.
+  const handleLaneCreatedViaChat = (laneCode: string) => {
+    fetchAllFromSupabase().then((result) => {
+      if (!result) return;
+      setLanes(result.lanes);
+      setAlerts(result.alerts);
+      refreshDashboardSummary();
+      const found = result.lanes.find((l) => l.laneCode === laneCode);
+      if (found) {
+        setRiskModalLane(found);
+        setIsChatAssistantOpen(false);
+      }
+    });
   };
 
   // Add custom risk factor to lane
@@ -599,141 +627,109 @@ export default function App() {
 
   const unreadAlerts = alerts.filter(a => !a.isAcknowledged);
 
+  const criticalCount = unreadAlerts.filter(a => a.severity === 'Critical').length;
+
   return (
-    <div className="min-h-screen bg-[#070d14] text-slate-100 font-sans selection:bg-teal-500 selection:text-white flex flex-col">
-      
-      {/* Top Application Header */}
-      <Header
-        activeRole={activeRole}
-        onRoleChange={setActiveRole}
+    <div className="min-h-screen bg-[#070d14] text-slate-100 font-sans selection:bg-teal-500 selection:text-white flex">
+
+      {/* Persistent Left Sidebar (desktop) */}
+      <Sidebar
+        activeTab={activeTab}
+        onSwitchTab={setActiveTab}
         onOpenNewLane={() => setIsNewLaneWizardOpen(true)}
         onOpenReports={() => setIsReportsModalOpen(true)}
-        onOpenAlerts={() => setIsAlertsCenterOpen(true)}
         onOpenCloudSync={() => setIsCloudSyncOpen(true)}
-        onOpenSettings={() => setActiveTab('SETTINGS')}
-        onOpenLogin={() => setActiveTab('LOGIN')}
+        onOpenAssistant={() => setIsChatAssistantOpen(true)}
         onLogout={handleLogout}
         currentUser={currentUser}
-        searchQuery={filters.searchQuery}
-        onSearchChange={(q) => setFilters(prev => ({ ...prev, searchQuery: q }))}
-        unreadAlerts={unreadAlerts}
-        isSimulating={isSimulating}
-        onToggleSimulation={() => setIsSimulating(!isSimulating)}
-        onTriggerSimulatedExcursion={handleTriggerSimulatedExcursion}
-        onResetData={handleResetData}
-        onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
+        activeRole={activeRole}
       />
 
-      {/* Main Container */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-5">
-        
-        {/* Navigation Tabs Bar */}
-        <div className="flex items-center justify-between gap-4 mb-5 border-b border-slate-800/80 pb-3 overflow-x-auto">
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setActiveTab('DASHBOARD')}
-              className={`flex items-center gap-2 px-3.5 py-2 rounded-lg font-bold text-xs sm:text-sm transition-all whitespace-nowrap ${
-                activeTab === 'DASHBOARD'
-                  ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
-              }`}
-            >
-              <LayoutDashboard className="w-4 h-4 text-emerald-400" />
-              <span>Global Dashboard</span>
-            </button>
-
-            <button
-              onClick={() => setActiveTab('LANES')}
-              className={`flex items-center gap-2 px-3.5 py-2 rounded-lg font-bold text-xs sm:text-sm transition-all whitespace-nowrap ${
-                activeTab === 'LANES'
-                  ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
-              }`}
-            >
-              <Layers className="w-4 h-4 text-teal-400" />
-              <span>Lane Risk Management</span>
-            </button>
-
-            <button
-              onClick={() => setActiveTab('COMPLIANCE')}
-              className={`flex items-center gap-2 px-3.5 py-2 rounded-lg font-bold text-xs sm:text-sm transition-all whitespace-nowrap ${
-                activeTab === 'COMPLIANCE'
-                  ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
-              }`}
-            >
-              <ShieldCheck className="w-4 h-4 text-teal-400" />
-              <span>GDP Compliance Trends</span>
-            </button>
-
-            <button
-              onClick={() => setActiveTab('AUDIT_LOGS')}
-              className={`flex items-center gap-2 px-3.5 py-2 rounded-lg font-bold text-xs sm:text-sm transition-all whitespace-nowrap ${
-                activeTab === 'AUDIT_LOGS'
-                  ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
-              }`}
-            >
-              <History className="w-4 h-4 text-sky-400" />
-              <span>Immutable Audit Trail</span>
-            </button>
-
-            <button
-              onClick={() => setActiveTab('SETTINGS')}
-              className={`flex items-center gap-2 px-3.5 py-2 rounded-lg font-bold text-xs sm:text-sm transition-all whitespace-nowrap ${
-                activeTab === 'SETTINGS'
-                  ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
-              }`}
-            >
-              <SettingsNavIcon className="w-4 h-4 text-amber-400" />
-              <span>Settings & Integrations</span>
-            </button>
-
-            <button
-              onClick={() => setActiveTab('LOGIN')}
-              className={`flex items-center gap-2 px-3.5 py-2 rounded-lg font-bold text-xs sm:text-sm transition-all whitespace-nowrap ${
-                activeTab === 'LOGIN'
-                  ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
-              }`}
-            >
-              <UserCheck className="w-4 h-4 text-purple-400" />
-              <span>Sign In / Personas</span>
-            </button>
+      {/* Mobile Sidebar Overlay */}
+      {isMobileNavOpen && (
+        <div className="fixed inset-0 z-50 md:hidden">
+          <div className="absolute inset-0 bg-black/70" onClick={() => setIsMobileNavOpen(false)} />
+          <div className="relative w-60 h-full">
+            <Sidebar
+              activeTab={activeTab}
+              onSwitchTab={(tab) => {
+                setActiveTab(tab);
+                setIsMobileNavOpen(false);
+              }}
+              onOpenNewLane={() => {
+                setIsNewLaneWizardOpen(true);
+                setIsMobileNavOpen(false);
+              }}
+              onOpenReports={() => {
+                setIsReportsModalOpen(true);
+                setIsMobileNavOpen(false);
+              }}
+              onOpenCloudSync={() => {
+                setIsCloudSyncOpen(true);
+                setIsMobileNavOpen(false);
+              }}
+              onOpenAssistant={() => {
+                setIsChatAssistantOpen(true);
+                setIsMobileNavOpen(false);
+              }}
+              onLogout={handleLogout}
+              currentUser={currentUser}
+              activeRole={activeRole}
+              className="flex flex-col h-full"
+            />
           </div>
+        </div>
+      )}
 
-          {/* Quick Active Excursion Warning Banner if critical alerts exist */}
-          {unreadAlerts.filter(a => a.severity === 'Critical').length > 0 && (
+      {/* Right Column: Top Bar + Page Content */}
+      <div className="flex-1 min-w-0 flex flex-col">
+        <TopBar
+          pageName={PAGE_NAMES[activeTab]}
+          searchQuery={filters.searchQuery}
+          onSearchChange={(q) => setFilters(prev => ({ ...prev, searchQuery: q }))}
+          onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
+          unreadAlerts={unreadAlerts}
+          onOpenAlerts={() => setIsAlertsCenterOpen(true)}
+          realtimeStatus={realtimeStatus}
+          onOpenMobileNav={() => setIsMobileNavOpen(true)}
+        />
+
+        {/* Main Container */}
+        <main className="flex-1 w-full mx-auto px-4 sm:px-6 py-5 max-w-[1600px]">
+
+          {/* Unresolved Critical Excursion Banner — content-level, not permanent chrome */}
+          {criticalCount > 0 && (
             <button
               onClick={() => setIsAlertsCenterOpen(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-500/20 text-rose-300 border border-rose-500/40 text-xs font-bold animate-pulse hover:bg-rose-500/30 whitespace-nowrap transition-all"
+              className="mb-5 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-500/20 text-rose-300 border border-rose-500/40 text-xs font-bold motion-safe:animate-pulse hover:bg-rose-500/30 whitespace-nowrap transition-all"
             >
               <AlertTriangle className="w-3.5 h-3.5 text-rose-400" />
-              <span>{unreadAlerts.filter(a => a.severity === 'Critical').length} Critical Excursions Active</span>
+              <span>{criticalCount} Critical Excursion{criticalCount > 1 ? 's' : ''} Active</span>
             </button>
           )}
-        </div>
 
         {/* TAB 1: Global Dashboard Overview */}
         {activeTab === 'DASHBOARD' && (
           <div>
-            {/* Top KPI Metrics */}
-            <KpiOverview
-              lanes={lanes}
-              summary={dataSource === 'cloud' ? dashboardSummary : null}
-              onSelectFilter={(key, value) => {
-                setFilters(prev => ({ ...prev, [key]: value }));
-                setActiveTab('LANES');
-              }}
-            />
+            {/* Narrow KPI column (ordered by importance) + large map, side by side */}
+            <div className="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-5 mb-6 items-start">
+              <div className="lg:sticky lg:top-20">
+                <KpiOverview
+                  lanes={lanes}
+                  summary={dataSource === 'cloud' ? dashboardSummary : null}
+                  onSelectFilter={(key, value) => {
+                    setFilters(prev => ({ ...prev, [key]: value }));
+                    setActiveTab('LANES');
+                  }}
+                />
+              </div>
 
-            {/* Interactive World Route Map */}
-            <GlobalNetworkMap
-              lanes={lanes}
-              selectedLaneId={riskModalLane?.id || null}
-              onSelectLane={(lane) => setRiskModalLane(lane)}
-            />
+              <GlobalNetworkMap
+                lanes={lanes}
+                selectedLaneId={riskModalLane?.id || null}
+                onSelectLane={(lane) => setRiskModalLane(lane)}
+              />
+            </div>
 
             {/* Weather & Route Disruption Alerts Feed */}
             <WeatherDisruptions
@@ -831,6 +827,9 @@ export default function App() {
             auditLogs={auditLogs}
             onResetData={handleResetData}
             onOpenLogin={() => setActiveTab('LOGIN')}
+            isSimulating={isSimulating}
+            onToggleSimulation={() => setIsSimulating(!isSimulating)}
+            onTriggerSimulatedExcursion={handleTriggerSimulatedExcursion}
           />
         )}
 
@@ -904,6 +903,7 @@ export default function App() {
           onClose={() => setIsNewLaneWizardOpen(false)}
           onCreateLane={handleCreateLane}
           onViewLane={(lane) => setRiskModalLane(lane)}
+          onLogAuditEntry={appendAuditLog}
         />
       )}
 
@@ -962,6 +962,17 @@ export default function App() {
         onOpenAlerts={() => setIsAlertsCenterOpen(true)}
         onOpenSettings={() => setActiveTab('SETTINGS')}
         onSwitchTab={(tab) => setActiveTab(tab)}
+        onOpenAssistant={() => setIsChatAssistantOpen(true)}
+      />
+
+      {/* Conversational Assistant Panel */}
+      <ChatAssistant
+        isOpen={isChatAssistantOpen}
+        onClose={() => setIsChatAssistantOpen(false)}
+        currentUser={currentUser}
+        activeRole={activeRole}
+        dataSource={dataSource}
+        onLaneCreated={handleLaneCreatedViaChat}
       />
 
       {/* Persistent Global Footer */}
@@ -981,6 +992,7 @@ export default function App() {
         </div>
       </footer>
 
+      </div>
     </div>
   );
 }

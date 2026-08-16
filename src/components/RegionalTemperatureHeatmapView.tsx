@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { ComposableMap, Geographies, Geography, Marker, Line } from 'react-simple-maps';
 import {
   Flame,
@@ -17,10 +17,14 @@ import {
   ArrowRight,
   Sparkles,
   Snowflake,
-  ExternalLink
+  ExternalLink,
+  Settings2,
+  Route as RouteIcon,
+  X,
 } from 'lucide-react';
 import { TransportLane, RegionalThermalHotspot, HeatmapConfig } from '../types';
 import { REGIONAL_THERMAL_HOTSPOTS, getThermalRiskColor } from '../data/temperatureRiskData';
+import { isLaneExcursing } from '../utils/laneRisk';
 
 const geoUrl = 'https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json';
 
@@ -45,6 +49,20 @@ export const RegionalTemperatureHeatmapView: React.FC<RegionalTemperatureHeatmap
   const [opacity, setOpacity] = useState<number>(0.85);
   const [showContours, setShowContours] = useState<boolean>(true);
   const [showLaneCorridors, setShowLaneCorridors] = useState<boolean>(true);
+  const [showFilterPopover, setShowFilterPopover] = useState<boolean>(false);
+  const popoverRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
+        setShowFilterPopover(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const excursionCount = lanes.filter(isLaneExcursing).length;
 
   const filteredHotspots = REGIONAL_THERMAL_HOTSPOTS.filter(h => {
     if (filterLevel === 'EXTREME') return h.thermalRiskLevel === 'Extreme Heat';
@@ -55,84 +73,6 @@ export const RegionalTemperatureHeatmapView: React.FC<RegionalTemperatureHeatmap
 
   return (
     <div className="space-y-4">
-      {/* Control & Filter Strip */}
-      <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-950/80 p-3 rounded-lg border border-slate-800 text-xs">
-        <div className="flex items-center gap-2">
-          <span className="text-slate-400 font-medium">Thermal Hazard Filter:</span>
-          <div className="flex items-center gap-1 bg-slate-900 p-0.5 rounded border border-slate-800">
-            <button
-              onClick={() => setFilterLevel('ALL')}
-              className={`px-2.5 py-1 rounded font-medium transition-all ${
-                filterLevel === 'ALL' ? 'bg-slate-700 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              All Zones ({REGIONAL_THERMAL_HOTSPOTS.length})
-            </button>
-            <button
-              onClick={() => setFilterLevel('EXTREME')}
-              className={`px-2.5 py-1 rounded font-medium transition-all ${
-                filterLevel === 'EXTREME' ? 'bg-rose-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              Extreme Heat (&gt;40°C)
-            </button>
-            <button
-              onClick={() => setFilterLevel('HIGH')}
-              className={`px-2.5 py-1 rounded font-medium transition-all ${
-                filterLevel === 'HIGH' ? 'bg-orange-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              High Heat (&gt;30°C)
-            </button>
-            <button
-              onClick={() => setFilterLevel('FREEZE')}
-              className={`px-2.5 py-1 rounded font-medium transition-all ${
-                filterLevel === 'FREEZE' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              Polar Freeze (&lt;0°C)
-            </button>
-          </div>
-        </div>
-
-        {/* View Options */}
-        <div className="flex items-center gap-4 text-slate-300">
-          <label className="flex items-center gap-1.5 cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={showContours}
-              onChange={(e) => setShowContours(e.target.checked)}
-              className="rounded bg-slate-900 border-slate-700 text-teal-500 focus:ring-0"
-            />
-            <span className="text-slate-400">Thermal Isochrones</span>
-          </label>
-
-          <label className="flex items-center gap-1.5 cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={showLaneCorridors}
-              onChange={(e) => setShowLaneCorridors(e.target.checked)}
-              className="rounded bg-slate-900 border-slate-700 text-teal-500 focus:ring-0"
-            />
-            <span className="text-slate-400">Lane Trajectories</span>
-          </label>
-
-          <div className="flex items-center gap-2 pl-2 border-l border-slate-800">
-            <span className="text-slate-400">Heat Density:</span>
-            <input
-              type="range"
-              min="0.3"
-              max="1.0"
-              step="0.05"
-              value={opacity}
-              onChange={(e) => setOpacity(parseFloat(e.target.value))}
-              className="w-20 accent-teal-500 h-1.5 bg-slate-800 rounded-lg cursor-pointer"
-            />
-            <span className="font-mono text-[11px] text-slate-400">{Math.round(opacity * 100)}%</span>
-          </div>
-        </div>
-      </div>
-
       {/* Primary Interactive Heatmap Display */}
       <div className="relative w-full aspect-[2/1] min-h-[340px] max-h-[480px] bg-slate-950 rounded-xl border border-slate-800 overflow-hidden">
         
@@ -303,21 +243,111 @@ export const RegionalTemperatureHeatmapView: React.FC<RegionalTemperatureHeatmap
           })}
         </ComposableMap>
 
-        {/* Floating Heatmap Scale Legend */}
-        <div className="absolute bottom-3 right-3 bg-slate-900/90 backdrop-blur-md border border-slate-800 rounded-lg p-2.5 text-xs text-slate-300 shadow-xl max-w-xs">
-          <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5 flex items-center justify-between">
-            <span>Thermal Severity Gradient</span>
-            <span className="font-mono text-slate-500">ISO-28590</span>
-          </div>
+        {/* Single Floating Summary Card — route/excursion counts + a gear icon that reveals the
+            detailed hazard filters, replacing what used to be a permanently-visible filter bar
+            above the map. */}
+        <div ref={popoverRef} className="absolute bottom-3 right-3 z-20">
+          {showFilterPopover && (
+            <div className="absolute bottom-full right-0 mb-2 w-72 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl p-3 text-xs space-y-3 animate-in fade-in zoom-in-95 duration-100">
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-slate-200 flex items-center gap-1.5">
+                  <Sliders className="w-3.5 h-3.5 text-teal-400" /> Map Filters
+                </span>
+                <button onClick={() => setShowFilterPopover(false)} className="p-1 rounded hover:bg-slate-800 text-slate-400" aria-label="Close filters">
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
 
-          {/* Color Gradient Bar */}
-          <div className="h-2 rounded-full w-full bg-gradient-to-r from-indigo-500 via-emerald-500 via-amber-400 via-orange-500 to-rose-600 mb-1.5" />
+              <div>
+                <div className="text-slate-400 mb-1.5">Thermal Hazard Filter</div>
+                <div className="flex flex-col gap-1">
+                  {([
+                    ['ALL', `All Zones (${REGIONAL_THERMAL_HOTSPOTS.length})`],
+                    ['EXTREME', 'Extreme Heat (>40°C)'],
+                    ['HIGH', 'High Heat (>30°C)'],
+                    ['FREEZE', 'Polar Freeze (<0°C)'],
+                  ] as const).map(([level, label]) => (
+                    <button
+                      key={level}
+                      onClick={() => setFilterLevel(level)}
+                      className={`px-2.5 py-1.5 rounded text-left font-medium transition-all ${
+                        filterLevel === level ? 'bg-slate-700 text-white' : 'bg-slate-950 text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
 
-          <div className="flex items-center justify-between text-[10px] text-slate-400 font-mono">
-            <span>&lt;0°C (Freeze)</span>
-            <span>2°-8°C</span>
-            <span>25°C</span>
-            <span>&gt;45°C (Extreme)</span>
+              <div className="space-y-1.5 pt-1 border-t border-slate-800">
+                <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={showContours}
+                    onChange={(e) => setShowContours(e.target.checked)}
+                    className="rounded bg-slate-900 border-slate-700 text-teal-500 focus:ring-0"
+                  />
+                  <span className="text-slate-300">Thermal Isochrones</span>
+                </label>
+                <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={showLaneCorridors}
+                    onChange={(e) => setShowLaneCorridors(e.target.checked)}
+                    className="rounded bg-slate-900 border-slate-700 text-teal-500 focus:ring-0"
+                  />
+                  <span className="text-slate-300">Lane Trajectories</span>
+                </label>
+              </div>
+
+              <div className="flex items-center gap-2 pt-1 border-t border-slate-800">
+                <span className="text-slate-400">Heat Density:</span>
+                <input
+                  type="range"
+                  min="0.3"
+                  max="1.0"
+                  step="0.05"
+                  value={opacity}
+                  onChange={(e) => setOpacity(parseFloat(e.target.value))}
+                  className="flex-1 accent-teal-500 h-1.5 bg-slate-800 rounded-lg cursor-pointer"
+                />
+                <span className="font-mono text-[11px] text-slate-400 w-9 text-right">{Math.round(opacity * 100)}%</span>
+              </div>
+            </div>
+          )}
+
+          <div className="bg-slate-900/90 backdrop-blur-md border border-slate-800 rounded-lg p-2.5 text-xs text-slate-300 shadow-xl max-w-xs">
+            <div className="flex items-center gap-3 mb-2">
+              <div className="flex items-center gap-1.5">
+                <RouteIcon className="w-3.5 h-3.5 text-teal-400" />
+                <span className="font-bold text-slate-100">{lanes.length}</span>
+                <span className="text-slate-500">routes</span>
+              </div>
+              <div className="w-px h-4 bg-slate-800" />
+              <div className="flex items-center gap-1.5">
+                <AlertTriangle className={`w-3.5 h-3.5 ${excursionCount > 0 ? 'text-rose-400' : 'text-slate-500'}`} />
+                <span className={`font-bold ${excursionCount > 0 ? 'text-rose-400' : 'text-slate-100'}`}>{excursionCount}</span>
+                <span className="text-slate-500">excursions</span>
+              </div>
+              <button
+                onClick={() => setShowFilterPopover((v) => !v)}
+                className="ml-auto p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors"
+                aria-label="Map filters"
+                title="Map filters"
+              >
+                <Settings2 className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            {/* Color Gradient Bar */}
+            <div className="h-2 rounded-full w-full bg-gradient-to-r from-indigo-500 via-emerald-500 via-amber-400 via-orange-500 to-rose-600 mb-1.5" />
+            <div className="flex items-center justify-between text-[10px] text-slate-400 font-mono">
+              <span>&lt;0°C</span>
+              <span>2°-8°C</span>
+              <span>25°C</span>
+              <span>&gt;45°C</span>
+            </div>
           </div>
         </div>
 
