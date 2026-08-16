@@ -1,25 +1,48 @@
-import React, { useState } from 'react';
-import { 
-  Plane, 
-  Ship, 
-  Truck, 
-  Layers, 
-  ChevronRight, 
-  Thermometer, 
-  AlertTriangle, 
-  ShieldAlert, 
-  ShieldCheck, 
-  Clock, 
+import React, { useEffect, useRef, useState } from 'react';
+import {
+  Plane,
+  Ship,
+  Truck,
+  Layers,
+  ChevronRight,
+  Thermometer,
+  AlertTriangle,
+  ShieldAlert,
+  ShieldCheck,
+  Clock,
   ArrowUpRight,
   TrendingUp,
   Activity,
   PlusCircle,
   Eye,
   Route as RouteIcon,
-  Pencil
+  Pencil,
+  AlertOctagon,
+  AlertCircle,
+  CheckCircle2,
+  MoreVertical,
+  Rows3,
+  Rows4,
 } from 'lucide-react';
-import { TransportLane, TransportMode } from '../types';
+import { TransportLane, TransportMode, RiskLevel } from '../types';
 import { getRiskColor, getStatusColor, getGdpBadge, formatCurrency } from '../utils/formatters';
+import { getEffectiveRiskLevel, getEffectiveRiskScore } from '../utils/laneRisk';
+import { TemperatureSparkline } from './TemperatureSparkline';
+
+// Distinct icon per risk level so the Composite Risk badge can never be mistaken for the
+// GDP Status badge next to it, even when both happen to render in the same color.
+function getRiskIcon(level: RiskLevel) {
+  switch (level) {
+    case 'Critical':
+      return <AlertOctagon className="w-3 h-3" />;
+    case 'High':
+      return <AlertTriangle className="w-3 h-3" />;
+    case 'Medium':
+      return <AlertCircle className="w-3 h-3" />;
+    default:
+      return <CheckCircle2 className="w-3 h-3" />;
+  }
+}
 
 interface LaneManagementTableProps {
   lanes: TransportLane[];
@@ -41,6 +64,28 @@ export const LaneManagementTable: React.FC<LaneManagementTableProps> = ({
   onEditLane,
 }) => {
   const [activeTab, setActiveTab] = useState<'ALL' | TransportMode>('ALL');
+  const [density, setDensity] = useState<'comfortable' | 'compact'>(() => {
+    if (typeof window === 'undefined') return 'comfortable';
+    return (localStorage.getItem('pharmatrack-lane-table-density') as 'comfortable' | 'compact') || 'comfortable';
+  });
+  useEffect(() => {
+    localStorage.setItem('pharmatrack-lane-table-density', density);
+  }, [density]);
+  const rowPad = density === 'compact' ? 'py-1.5' : 'py-3.5';
+
+  // Hick's Law: only one primary action ("Assess Risks") stays visible per row; Edit / Manage
+  // Stops / Live Telemetry move into a single overflow menu.
+  const [openMenuLaneId, setOpenMenuLaneId] = useState<string | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setOpenMenuLaneId(null);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   const filteredByTab = lanes.filter(l => {
     if (activeTab === 'ALL') return true;
@@ -158,6 +203,30 @@ export const LaneManagementTable: React.FC<LaneManagementTableProps> = ({
             </span>
           </button>
         </div>
+
+        {/* Density Toggle */}
+        <div className="flex items-center gap-0.5 bg-slate-950 p-1 rounded-lg border border-slate-800 text-xs flex-shrink-0">
+          <button
+            onClick={() => setDensity('comfortable')}
+            aria-pressed={density === 'comfortable'}
+            title="Comfortable row spacing"
+            className={`min-w-[36px] min-h-[32px] px-2 rounded-md flex items-center justify-center transition-all ${
+              density === 'comfortable' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Rows3 className="w-3.5 h-3.5" />
+          </button>
+          <button
+            onClick={() => setDensity('compact')}
+            aria-pressed={density === 'compact'}
+            title="Compact row spacing"
+            className={`min-w-[36px] min-h-[32px] px-2 rounded-md flex items-center justify-center transition-all ${
+              density === 'compact' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Rows4 className="w-3.5 h-3.5" />
+          </button>
+        </div>
       </div>
 
       {/* Table Content */}
@@ -185,7 +254,9 @@ export const LaneManagementTable: React.FC<LaneManagementTableProps> = ({
             ) : (
               filteredByTab.map((lane) => {
                 const isSelected = selectedLaneId === lane.id;
-                const riskStyles = getRiskColor(lane.riskLevel);
+                const effectiveRiskLevel = getEffectiveRiskLevel(lane);
+                const effectiveRiskScore = getEffectiveRiskScore(lane);
+                const riskStyles = getRiskColor(effectiveRiskLevel);
                 const statusStyles = getStatusColor(lane.status);
                 const gdpBadge = getGdpBadge(lane.gdpStatus);
                 const isTempExcursion = lane.currentTemp > lane.tempMax || lane.currentTemp < lane.tempMin;
@@ -199,7 +270,7 @@ export const LaneManagementTable: React.FC<LaneManagementTableProps> = ({
                     onClick={() => onSelectLane(lane)}
                   >
                     {/* Route & Code */}
-                    <td className="py-3.5 px-4">
+                    <td className={`${rowPad} px-4`}>
                       <div className="flex items-center gap-2.5">
                         <div className="p-2 rounded-lg bg-slate-800 text-slate-300 group-hover:bg-slate-700">
                           {getModeIcon(lane.mode)}
@@ -225,7 +296,7 @@ export const LaneManagementTable: React.FC<LaneManagementTableProps> = ({
                     </td>
 
                     {/* Payload & Carrier */}
-                    <td className="py-3.5 px-4">
+                    <td className={`${rowPad} px-4`}>
                       <div className="font-semibold text-slate-200">{lane.productName}</div>
                       <div className="text-[11px] text-slate-400 flex items-center gap-1.5">
                         <span className="text-teal-400 font-medium">{lane.carrier}</span>
@@ -235,7 +306,7 @@ export const LaneManagementTable: React.FC<LaneManagementTableProps> = ({
                     </td>
 
                     {/* Transit Progress */}
-                    <td className="py-3.5 px-4 w-44">
+                    <td className={`${rowPad} px-4 w-44`}>
                       <div className="flex items-center justify-between text-[11px] mb-1">
                         <span className="text-slate-300 font-medium">{lane.transitProgress}%</span>
                         <span className="text-slate-400">
@@ -261,7 +332,7 @@ export const LaneManagementTable: React.FC<LaneManagementTableProps> = ({
                     </td>
 
                     {/* Live Temperature */}
-                    <td className="py-3.5 px-4">
+                    <td className={`${rowPad} px-4`}>
                       <div className="flex items-center gap-2">
                         <div className={`p-1.5 rounded-lg ${
                           isTempExcursion
@@ -282,11 +353,12 @@ export const LaneManagementTable: React.FC<LaneManagementTableProps> = ({
                             Target: {lane.tempMin}°C to {lane.tempMax}°C
                           </div>
                         </div>
+                        <TemperatureSparkline history={lane.temperatureHistory} tempMin={lane.tempMin} tempMax={lane.tempMax} />
                       </div>
                     </td>
 
                     {/* GDP Status */}
-                    <td className="py-3.5 px-4">
+                    <td className={`${rowPad} px-4`}>
                       <span className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-md ${gdpBadge.class}`}>
                         {lane.gdpStatus === 'Compliant' ? (
                           <ShieldCheck className="w-3 h-3 text-emerald-400" />
@@ -298,63 +370,91 @@ export const LaneManagementTable: React.FC<LaneManagementTableProps> = ({
                     </td>
 
                     {/* Composite Risk Score */}
-                    <td className="py-3.5 px-4">
+                    <td className={`${rowPad} px-4`}>
                       <div className="flex items-center gap-2">
                         <div className="w-12 bg-slate-800 h-2 rounded-full overflow-hidden">
                           <div
                             className="h-full rounded-full transition-all"
                             style={{
-                              width: `${lane.riskScore}%`,
+                              width: `${effectiveRiskScore}%`,
                               backgroundColor: riskStyles.fill,
                             }}
                           />
                         </div>
-                        <span className={`text-[11px] font-bold px-2 py-0.5 rounded ${riskStyles.badge}`}>
-                          {lane.riskScore}% {lane.riskLevel}
+                        <span className={`inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded ${riskStyles.badge}`}>
+                          {getRiskIcon(effectiveRiskLevel)}
+                          {effectiveRiskScore}% {effectiveRiskLevel}
                         </span>
                       </div>
                     </td>
 
                     {/* Status Badge */}
-                    <td className="py-3.5 px-4">
+                    <td className={`${rowPad} px-4`}>
                       <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold ${statusStyles.bg}`}>
                         <span className={`w-1.5 h-1.5 rounded-full ${statusStyles.dot}`} />
                         {lane.status}
                       </span>
                     </td>
 
-                    {/* Actions */}
-                    <td className="py-3.5 px-4 text-right">
+                    {/* Actions: 1 primary action visible (Hick's Law), the rest behind a single overflow menu */}
+                    <td className={`${rowPad} px-4 text-right relative`}>
                       <div className="flex items-center justify-end gap-1.5" onClick={(e) => e.stopPropagation()}>
                         <button
                           onClick={() => onSelectLane(lane)}
-                          className="px-2.5 py-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[11px] font-semibold transition-all flex items-center gap-1"
+                          className="min-h-[36px] px-2.5 py-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[11px] font-semibold transition-all flex items-center gap-1"
                           title="Open Risk Assessment & Selection Window"
                         >
                           <Eye className="w-3.5 h-3.5" />
                           <span>Assess Risks</span>
                         </button>
+
                         <button
-                          onClick={() => onEditLane(lane)}
-                          className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition-colors"
-                          title="Edit Lane (reroute, carrier, cargo)"
+                          onClick={() => setOpenMenuLaneId(openMenuLaneId === lane.id ? null : lane.id)}
+                          className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition-colors"
+                          title="More actions"
+                          aria-label={`More actions for ${lane.laneCode}`}
+                          aria-expanded={openMenuLaneId === lane.id}
                         >
-                          <Pencil className="w-3.5 h-3.5 text-amber-400" />
+                          <MoreVertical className="w-4 h-4" />
                         </button>
-                        <button
-                          onClick={() => onManageStops(lane)}
-                          className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition-colors"
-                          title="Manage Route Stops"
-                        >
-                          <RouteIcon className="w-3.5 h-3.5 text-purple-400" />
-                        </button>
-                        <button
-                          onClick={() => onOpenTempMonitor(lane)}
-                          className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition-colors"
-                          title="View Live Temperature Telemetry"
-                        >
-                          <Activity className="w-3.5 h-3.5 text-teal-400" />
-                        </button>
+
+                        {openMenuLaneId === lane.id && (
+                          <div
+                            ref={menuRef}
+                            className="absolute right-4 top-full mt-1 w-56 bg-slate-950 border border-slate-700 rounded-lg shadow-2xl z-30 py-1 text-left animate-in fade-in zoom-in-95 duration-100"
+                          >
+                            <button
+                              onClick={() => {
+                                onEditLane(lane);
+                                setOpenMenuLaneId(null);
+                              }}
+                              className="w-full min-h-[40px] px-3 flex items-center gap-2.5 text-[12px] text-slate-200 hover:bg-slate-800 transition-colors"
+                            >
+                              <Pencil className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" />
+                              <span>Edit Lane (reroute, carrier, cargo)</span>
+                            </button>
+                            <button
+                              onClick={() => {
+                                onManageStops(lane);
+                                setOpenMenuLaneId(null);
+                              }}
+                              className="w-full min-h-[40px] px-3 flex items-center gap-2.5 text-[12px] text-slate-200 hover:bg-slate-800 transition-colors"
+                            >
+                              <RouteIcon className="w-3.5 h-3.5 text-purple-400 flex-shrink-0" />
+                              <span>Manage Route Stops</span>
+                            </button>
+                            <button
+                              onClick={() => {
+                                onOpenTempMonitor(lane);
+                                setOpenMenuLaneId(null);
+                              }}
+                              className="w-full min-h-[40px] px-3 flex items-center gap-2.5 text-[12px] text-slate-200 hover:bg-slate-800 transition-colors"
+                            >
+                              <Activity className="w-3.5 h-3.5 text-teal-400 flex-shrink-0" />
+                              <span>View Live Temperature Telemetry</span>
+                            </button>
+                          </div>
+                        )}
                       </div>
                     </td>
                   </tr>

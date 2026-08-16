@@ -303,11 +303,11 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
           onClick={() => setActiveTab('BACKUP')}
           className={`flex items-center gap-2 px-3.5 py-2 rounded-lg font-semibold whitespace-nowrap transition-all ${
             activeTab === 'BACKUP'
-              ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30 shadow-sm'
+              ? 'bg-slate-700/50 text-slate-200 border border-slate-600 shadow-sm'
               : 'text-slate-400 hover:text-slate-200'
           }`}
         >
-          <Download className="w-3.5 h-3.5 text-rose-400" />
+          <Download className="w-3.5 h-3.5 text-slate-300" />
           <span>Data Backup & Diagnostics</span>
         </button>
       </div>
@@ -875,7 +875,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
         <div className="space-y-6">
           <div className="bg-slate-950 p-5 rounded-xl border border-slate-800">
             <h2 className="text-sm font-bold text-slate-100 mb-1 flex items-center gap-2">
-              <Download className="w-4 h-4 text-rose-400" />
+              <Download className="w-4 h-4 text-slate-300" />
               System State Export & Factory Reset
             </h2>
             <p className="text-xs text-slate-400 mb-4">

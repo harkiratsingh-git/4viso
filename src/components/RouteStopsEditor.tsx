@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import { Plus, Trash2, ChevronUp, ChevronDown, Route as RouteIcon, ArrowRight, Sparkles, ShieldCheck, AlertTriangle } from 'lucide-react';
-import { RouteStop } from '../types';
+import { RouteStop, TransportMode } from '../types';
 import { AirportAutocomplete, AirportValue } from './AirportAutocomplete';
 import { getAirportCoords } from '../utils/geo';
 import { recommendStops, checkRouteCertification } from '../utils/ports';
@@ -20,6 +20,8 @@ interface RouteStopsEditorProps {
   /** Temperature envelope of the cargo, used to check cold-storage requirements at each stop. */
   tempMin?: number;
   tempMax?: number;
+  /** Transport mode — gates whether a stop is even suggested (e.g. Air routes within realistic nonstop range get no stop suggestions at all). */
+  mode?: TransportMode;
 }
 
 const emptyAirportValue = (): AirportValue => ({ city: '', iata: '', country: '', coords: getAirportCoords('') });
@@ -31,15 +33,16 @@ export const RouteStopsEditor: React.FC<RouteStopsEditorProps> = ({
   onStopsChange,
   tempMin = 2,
   tempMax = 8,
+  mode = 'Air',
 }) => {
   const { ports } = usePorts();
 
   const recommendations = useMemo(() => {
     if (!origin.iata || !destination.iata) return [];
-    return recommendStops(origin.coords, destination.coords, origin.iata, destination.iata, tempMin, tempMax, ports).filter(
+    return recommendStops(origin.coords, destination.coords, origin.iata, destination.iata, tempMin, tempMax, ports, mode).filter(
       (r) => !stops.some((s) => s.iata.toUpperCase() === r.port.code)
     );
-  }, [origin, destination, tempMin, tempMax, ports, stops]);
+  }, [origin, destination, tempMin, tempMax, ports, mode, stops]);
 
   const certificationIssues = useMemo(
     () => checkRouteCertification(stops.map((s) => ({ iata: s.iata, city: s.city })), ports, tempMax),

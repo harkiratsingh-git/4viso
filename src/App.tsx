@@ -24,10 +24,14 @@ import { FilterToolbar } from './components/FilterToolbar';
 import { LaneManagementTable } from './components/LaneManagementTable';
 import { LaneRiskAssessmentModal } from './components/LaneRiskAssessmentModal';
 import { ManageLaneStopsModal } from './components/ManageLaneStopsModal';
+import { LiveIndicator } from './components/LiveIndicator';
 import { EditLaneModal } from './components/EditLaneModal';
 import { CertificationIssue } from './utils/ports';
+import { isLaneExcursing, isLaneHighRisk, getEffectiveRiskLevel } from './utils/laneRisk';
+import { formatUtcCompact, formatUtcCompactNoSeconds } from './utils/dateFormat';
 import { TemperatureMonitoringSystem } from './components/TemperatureMonitoringSystem';
 import { NewLaneWizardModal } from './components/NewLaneWizardModal';
+import { CommandPalette } from './components/CommandPalette';
 import { RealTimeAlertsCenter } from './components/RealTimeAlertsCenter';
 import { GdpComplianceTrend } from './components/GdpComplianceTrend';
 import { AuditTrailView } from './components/AuditTrailView';
@@ -35,7 +39,8 @@ import { AutomatedReportingModal } from './components/AutomatedReportingModal';
 import { SupabaseSyncModal } from './components/SupabaseSyncModal';
 import { SettingsPage } from './components/SettingsPage';
 import { LoginPage } from './components/LoginPage';
-import { getActiveUser, setActiveUser as persistActiveUser, DEFAULT_SUPABASE_USER, fetchAllFromSupabase, restoreSupabaseSession, signOutFromSupabase } from './services/supabaseService';
+import { getActiveUser, setActiveUser as persistActiveUser, DEFAULT_SUPABASE_USER, fetchAllFromSupabase, restoreSupabaseSession, signOutFromSupabase, fetchDashboardSummary, DashboardSummary, getSupabaseClient, searchLanesRemote } from './services/supabaseService';
+import { mapRowToTemperatureReading, mapRowToAlert } from './services/supabaseMappers';
 import { 
   LayoutDashboard, 
   Layers, 
@@ -107,12 +112,24 @@ export default function App() {
   const [isReportsModalOpen, setIsReportsModalOpen] = useState<boolean>(false);
   const [isAlertsCenterOpen, setIsAlertsCenterOpen] = useState<boolean>(false);
   const [isCloudSyncOpen, setIsCloudSyncOpen] = useState<boolean>(false);
+  const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState<boolean>(false);
 
   // Simulation engine state
   const [isSimulating, setIsSimulating] = useState<boolean>(true);
 
   // Cloud data source state — whether the dashboard is showing live Supabase data or the local demo dataset
   const [dataSource, setDataSource] = useState<'loading' | 'cloud' | 'local'>('loading');
+  const [dashboardSummary, setDashboardSummary] = useState<DashboardSummary | null>(null);
+  const [realtimeStatus, setRealtimeStatus] = useState<'disabled' | 'connecting' | 'live' | 'reconnecting'>('disabled');
+  // null = no successful remote search for the current query yet (use local filtering fallback);
+  // a Set = the trigram-indexed search_lanes RPC matched these lane IDs for the current query.
+  const [remoteSearchIds, setRemoteSearchIds] = useState<Set<string> | null>(null);
+
+  const refreshDashboardSummary = () => {
+    fetchDashboardSummary()
+      .then(summary => setDashboardSummary(summary))
+      .catch(err => console.warn('Failed to refresh dashboard_summary:', err));
+  };
 
   // On mount, attempt to load real data from the connected Supabase project.
   // Falls back to the local demo dataset (already the initial state above) if unavailable.
@@ -127,6 +144,7 @@ export default function App() {
           setAlerts(result.alerts);
           if (result.auditLogs.length > 0) setAuditLogs(result.auditLogs);
           setDataSource('cloud');
+          refreshDashboardSummary();
         } else {
           setDataSource('local');
         }
@@ -161,9 +179,10 @@ export default function App() {
     };
   }, []);
 
-  // Periodic IoT telemetry background simulation ticker
+  // Periodic IoT telemetry background simulation ticker — local demo mode only. When
+  // connected to Supabase, real Realtime events (below) drive updates instead.
   useEffect(() => {
-    if (!isSimulating) return;
+    if (!isSimulating || dataSource === 'cloud') return;
 
     const interval = setInterval(() => {
       setLanes(prevLanes => {
@@ -198,7 +217,89 @@ export default function App() {
     }, 5000);
 
     return () => clearInterval(interval);
-  }, [isSimulating]);
+  }, [isSimulating, dataSource]);
+
+  // Real-time telemetry & alert updates via Supabase Realtime — replaces polling entirely
+  // when cloud-connected. realtimeStatus drives the Live/Reconnecting indicator in the footer.
+  useEffect(() => {
+    if (dataSource !== 'cloud') {
+      setRealtimeStatus('disabled');
+      return;
+    }
+
+    const client = getSupabaseClient();
+    if (!client) {
+      setRealtimeStatus('disabled');
+      return;
+    }
+
+    setRealtimeStatus('connecting');
+
+    const channel = client
+      .channel('pharmatrack-live')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'temperature_telemetry' }, (payload) => {
+        const reading = mapRowToTemperatureReading(payload.new);
+        const laneId = String((payload.new as any).lane_id);
+        setLanes(prev => prev.map(l => (
+          l.id === laneId
+            ? { ...l, currentTemp: reading.coreTemp, temperatureHistory: [...l.temperatureHistory.slice(-9), reading] }
+            : l
+        )));
+        refreshDashboardSummary();
+      })
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'alert_notifications' }, (payload) => {
+        const alert = mapRowToAlert(payload.new);
+        setAlerts(prev => (prev.some(a => a.id === alert.id) ? prev : [alert, ...prev]));
+        refreshDashboardSummary();
+      })
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'alert_notifications' }, (payload) => {
+        const alert = mapRowToAlert(payload.new);
+        setAlerts(prev => prev.map(a => (a.id === alert.id ? alert : a)));
+        refreshDashboardSummary();
+      })
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') setRealtimeStatus('live');
+        else if (status === 'CLOSED' || status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') setRealtimeStatus('reconnecting');
+      });
+
+    return () => {
+      client.removeChannel(channel);
+    };
+  }, [dataSource]);
+
+  // Debounced server-side trigram search (idx_lanes_search_trgm / search_lanes RPC) when
+  // cloud-connected — falls back to local multi-field filtering below on failure or when
+  // running against the local demo dataset.
+  useEffect(() => {
+    const query = filters.searchQuery.trim();
+    if (dataSource !== 'cloud' || query === '') {
+      setRemoteSearchIds(null);
+      return;
+    }
+    let cancelled = false;
+    const handle = setTimeout(() => {
+      searchLanesRemote(query).then(results => {
+        if (cancelled) return;
+        setRemoteSearchIds(results ? new Set(results.map(l => l.id)) : null);
+      });
+    }, 300);
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
+  }, [filters.searchQuery, dataSource]);
+
+  // Cmd/Ctrl+K opens the command palette from anywhere in the app.
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setIsCommandPaletteOpen((open) => !open);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   // Log an event into immutable audit trail
   const appendAuditLog = (
@@ -209,7 +310,7 @@ export default function App() {
   ) => {
     const newLog: AuditLogEntry = {
       id: `log-${Date.now()}`,
-      timestamp: new Date().toISOString().replace('T', ' ').slice(0, 19) + ' UTC',
+      timestamp: formatUtcCompact(new Date()),
       actor: currentUser?.name || activeRole.name,
       role: currentUser?.role || activeRole.title,
       laneCode,
@@ -343,7 +444,7 @@ export default function App() {
         laneId,
         laneCode,
         route: `${updates.originCity} → ${updates.destinationCity}`,
-        timestamp: new Date().toISOString().replace('T', ' ').slice(0, 19) + ' UTC',
+        timestamp: formatUtcCompact(new Date()),
         type: 'GDP_BREACH',
         severity: 'Warning',
         title: `Route Certification Gap in ${laneCode}`,
@@ -396,7 +497,7 @@ export default function App() {
           ...a,
           isAcknowledged: true,
           acknowledgedBy: activeRole.name,
-          acknowledgedAt: new Date().toISOString().replace('T', ' ').slice(0, 16) + ' UTC',
+          acknowledgedAt: formatUtcCompactNoSeconds(new Date()),
         };
       }
       return a;
@@ -426,7 +527,7 @@ export default function App() {
       laneId: targetLane.id,
       laneCode: targetLane.laneCode,
       route: `${targetLane.originCity} → ${targetLane.destinationCity}`,
-      timestamp: new Date().toISOString().replace('T', ' ').slice(0, 19) + ' UTC',
+      timestamp: formatUtcCompact(new Date()),
       type: 'TEMPERATURE_EXCURSION',
       severity: 'Critical',
       title: `Simulated Excursion in ${targetLane.laneCode}`,
@@ -463,21 +564,25 @@ export default function App() {
   // Filter application
   const filteredLanes = lanes.filter(lane => {
     if (filters.searchQuery.trim() !== '') {
-      const q = filters.searchQuery.toLowerCase();
-      const match = 
-        lane.laneCode.toLowerCase().includes(q) ||
-        lane.originCity.toLowerCase().includes(q) ||
-        lane.originIata.toLowerCase().includes(q) ||
-        lane.destinationCity.toLowerCase().includes(q) ||
-        lane.destinationIata.toLowerCase().includes(q) ||
-        lane.carrier.toLowerCase().includes(q) ||
-        lane.productName.toLowerCase().includes(q);
-      if (!match) return false;
+      if (remoteSearchIds !== null) {
+        if (!remoteSearchIds.has(lane.id)) return false;
+      } else {
+        const q = filters.searchQuery.toLowerCase();
+        const match =
+          lane.laneCode.toLowerCase().includes(q) ||
+          lane.originCity.toLowerCase().includes(q) ||
+          lane.originIata.toLowerCase().includes(q) ||
+          lane.destinationCity.toLowerCase().includes(q) ||
+          lane.destinationIata.toLowerCase().includes(q) ||
+          lane.carrier.toLowerCase().includes(q) ||
+          lane.productName.toLowerCase().includes(q);
+        if (!match) return false;
+      }
     }
 
     if (filters.mode !== 'All' && lane.mode !== filters.mode) return false;
 
-    if (filters.riskSeverity !== 'All' && lane.riskLevel !== filters.riskSeverity) return false;
+    if (filters.riskSeverity !== 'All' && getEffectiveRiskLevel(lane) !== filters.riskSeverity) return false;
 
     if (filters.gdpStatus !== 'All' && lane.gdpStatus !== filters.gdpStatus) return false;
 
@@ -487,7 +592,7 @@ export default function App() {
 
     if (filters.productCategory !== 'All' && lane.productCategory !== filters.productCategory) return false;
 
-    if (filters.showOnlyAlerts && lane.status !== 'Temperature Alert' && lane.riskScore < 40) return false;
+    if (filters.showOnlyAlerts && !isLaneExcursing(lane) && !isLaneHighRisk(lane)) return false;
 
     return true;
   });
@@ -516,6 +621,7 @@ export default function App() {
         onToggleSimulation={() => setIsSimulating(!isSimulating)}
         onTriggerSimulatedExcursion={handleTriggerSimulatedExcursion}
         onResetData={handleResetData}
+        onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
       />
 
       {/* Main Container */}
@@ -615,6 +721,7 @@ export default function App() {
             {/* Top KPI Metrics */}
             <KpiOverview
               lanes={lanes}
+              summary={dataSource === 'cloud' ? dashboardSummary : null}
               onSelectFilter={(key, value) => {
                 setFilters(prev => ({ ...prev, [key]: value }));
                 setActiveTab('LANES');
@@ -796,6 +903,7 @@ export default function App() {
         <NewLaneWizardModal
           onClose={() => setIsNewLaneWizardOpen(false)}
           onCreateLane={handleCreateLane}
+          onViewLane={(lane) => setRiskModalLane(lane)}
         />
       )}
 
@@ -826,6 +934,8 @@ export default function App() {
         <RealTimeAlertsCenter
           alerts={alerts}
           lanes={lanes}
+          realtimeStatus={realtimeStatus}
+          currentUserRole={currentUser?.role}
           onClose={() => setIsAlertsCenterOpen(false)}
           onAcknowledgeAlert={handleAcknowledgeAlert}
           onSelectLaneByCode={(code) => {
@@ -842,6 +952,18 @@ export default function App() {
         />
       )}
 
+      {/* Keyboard-first Command Palette (Cmd/Ctrl+K) */}
+      <CommandPalette
+        isOpen={isCommandPaletteOpen}
+        onClose={() => setIsCommandPaletteOpen(false)}
+        lanes={lanes}
+        onSelectLane={(lane) => setRiskModalLane(lane)}
+        onCreateLane={() => setIsNewLaneWizardOpen(true)}
+        onOpenAlerts={() => setIsAlertsCenterOpen(true)}
+        onOpenSettings={() => setActiveTab('SETTINGS')}
+        onSwitchTab={(tab) => setActiveTab(tab)}
+      />
+
       {/* Persistent Global Footer */}
       <footer className="bg-slate-950/90 border-t border-slate-800/80 px-4 sm:px-6 py-4 mt-8">
         <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-400">
@@ -851,11 +973,10 @@ export default function App() {
           </div>
           <div className="flex items-center gap-4 text-slate-400">
             <span>Logged in as: <strong className="text-slate-200">{activeRole.name}</strong> ({activeRole.title})</span>
-            <span className={`font-mono ${dataSource === 'cloud' ? 'text-emerald-400' : dataSource === 'local' ? 'text-amber-400' : 'text-slate-500'}`}>
-              {dataSource === 'loading' && 'Connecting to Supabase…'}
-              {dataSource === 'cloud' && `Data Source: Supabase Cloud (${lanes.length} lanes live)`}
-              {dataSource === 'local' && 'Data Source: Local Demo Dataset (Supabase unavailable)'}
+            <span className="font-mono">
+              {dataSource === 'cloud' ? `Supabase Cloud (${lanes.length} lanes)` : dataSource === 'local' ? 'Local Demo Dataset' : 'Connecting…'}
             </span>
+            <LiveIndicator status={realtimeStatus} className="font-mono" />
           </div>
         </div>
       </footer>

@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { TransportLane, RiskFactor, RiskLevel } from '../types';
 import { getRiskColor, getStatusColor, formatCurrency } from '../utils/formatters';
+import { isLaneExcursing, getEffectiveRiskLevel, getEffectiveRiskScore } from '../utils/laneRisk';
 
 interface LaneRiskAssessmentModalProps {
   lane: TransportLane;
@@ -50,7 +51,9 @@ export const LaneRiskAssessmentModal: React.FC<LaneRiskAssessmentModalProps> = (
   const [newRiskMitigation, setNewRiskMitigation] = useState<string>('');
   const [actionSuccessMsg, setActionSuccessMsg] = useState<string | null>(null);
 
-  const riskStyles = getRiskColor(lane.riskLevel);
+  const effectiveRiskLevel = getEffectiveRiskLevel(lane);
+  const effectiveRiskScore = getEffectiveRiskScore(lane);
+  const riskStyles = getRiskColor(effectiveRiskLevel);
   const statusStyles = getStatusColor(lane.status);
 
   const categories = [
@@ -111,8 +114,8 @@ export const LaneRiskAssessmentModal: React.FC<LaneRiskAssessmentModalProps> = (
     {
       name: 'Temperature Stability',
       icon: <Thermometer className="w-4 h-4 text-rose-400" />,
-      score: lane.status === 'Temperature Alert' ? 95 : lane.currentTemp > lane.tempMax - 0.5 ? 70 : 12,
-      riskLevel: lane.status === 'Temperature Alert' ? 'Critical' : lane.currentTemp > lane.tempMax - 0.5 ? 'High' : 'Low',
+      score: isLaneExcursing(lane) ? 95 : lane.currentTemp > lane.tempMax - 0.5 ? 70 : 12,
+      riskLevel: isLaneExcursing(lane) ? 'Critical' : lane.currentTemp > lane.tempMax - 0.5 ? 'High' : 'Low',
       description: 'Thermal inertia of shipper, ambient excursion exposure, reefer uptime.',
     },
     {
@@ -168,7 +171,7 @@ export const LaneRiskAssessmentModal: React.FC<LaneRiskAssessmentModalProps> = (
                   Risk Assessment: {lane.laneCode}
                 </h2>
                 <span className={`px-2.5 py-0.5 rounded-md text-xs font-extrabold ${riskStyles.badge}`}>
-                  Composite Risk: {lane.riskScore}% ({lane.riskLevel})
+                  Composite Risk: {effectiveRiskScore}% ({effectiveRiskLevel})
                 </span>
                 <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${statusStyles.bg}`}>
                   {lane.status}

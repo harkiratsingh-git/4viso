@@ -15,6 +15,7 @@ import {
   RiskLevel,
   TemperatureRangeType,
 } from '../types';
+import { formatUtcCompact } from '../utils/dateFormat';
 
 function s(val: unknown): string {
   return typeof val === 'string' ? val : '';
@@ -30,7 +31,7 @@ export function normalizeTimestamp(raw: unknown): string {
   if (!str) return '';
   const d = new Date(str);
   if (isNaN(d.getTime())) return str;
-  return d.toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
+  return formatUtcCompact(d);
 }
 
 function normalizeTempRangeType(raw: unknown, min: number, max: number): TemperatureRangeType {

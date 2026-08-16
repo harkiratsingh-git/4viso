@@ -1,14 +1,16 @@
-import React from 'react';
-import { 
-  Filter, 
-  RotateCcw, 
-  ThermometerSnowflake, 
-  AlertTriangle, 
-  Plane, 
-  Ship, 
-  Truck, 
-  Layers, 
-  Sparkles 
+import React, { useEffect, useState } from 'react';
+import {
+  Filter,
+  RotateCcw,
+  ThermometerSnowflake,
+  AlertTriangle,
+  Plane,
+  Ship,
+  Truck,
+  Layers,
+  Sparkles,
+  ChevronDown,
+  X,
 } from 'lucide-react';
 import { FilterState, TransportMode, RiskLevel, GdpStatus } from '../types';
 
@@ -23,14 +25,28 @@ export const FilterToolbar: React.FC<FilterToolbarProps> = ({
   onFilterChange,
   onResetFilters,
 }) => {
-  const isFiltered = 
-    filters.mode !== 'All' || 
-    filters.riskSeverity !== 'All' || 
-    filters.tempStatus !== 'All' || 
+  const isFiltered =
+    filters.mode !== 'All' ||
+    filters.riskSeverity !== 'All' ||
+    filters.tempStatus !== 'All' ||
     filters.gdpStatus !== 'All' ||
     filters.productCategory !== 'All' ||
     filters.showOnlyAlerts ||
     filters.searchQuery !== '';
+
+  // Miller's Law: the 4 advanced selectors stay collapsed by default and only the 3 quick
+  // presets + search (in the top nav) are visible up front. Auto-expand if one of them is
+  // already active (e.g. set programmatically from a dashboard tile) so state is never hidden.
+  const advancedFilters: { key: string; label: string; clear: () => void }[] = [];
+  if (filters.mode !== 'All') advancedFilters.push({ key: 'mode', label: `Mode: ${filters.mode}`, clear: () => onFilterChange({ ...filters, mode: 'All' }) });
+  if (filters.riskSeverity !== 'All') advancedFilters.push({ key: 'risk', label: `Risk: ${filters.riskSeverity}`, clear: () => onFilterChange({ ...filters, riskSeverity: 'All' }) });
+  if (filters.tempStatus !== 'All') advancedFilters.push({ key: 'temp', label: `Temp: ${filters.tempStatus}`, clear: () => onFilterChange({ ...filters, tempStatus: 'All' }) });
+  if (filters.productCategory !== 'All') advancedFilters.push({ key: 'product', label: `Product: ${filters.productCategory}`, clear: () => onFilterChange({ ...filters, productCategory: 'All' }) });
+
+  const [showMoreFilters, setShowMoreFilters] = useState(advancedFilters.length > 0);
+  useEffect(() => {
+    if (advancedFilters.length > 0) setShowMoreFilters(true);
+  }, [advancedFilters.length]);
 
   const handleModeChange = (mode: 'All' | TransportMode) => {
     onFilterChange({ ...filters, mode });
@@ -118,21 +134,53 @@ export const FilterToolbar: React.FC<FilterToolbarProps> = ({
           </div>
         </div>
 
-        {/* Reset Filter Button */}
-        {isFiltered && (
+        <div className="flex items-center gap-2">
           <button
-            onClick={onResetFilters}
-            className="flex items-center gap-1 text-xs text-slate-400 hover:text-white px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 transition-colors"
+            onClick={() => setShowMoreFilters((v) => !v)}
+            aria-expanded={showMoreFilters}
+            className="min-h-[32px] flex items-center gap-1.5 text-xs font-semibold text-slate-300 hover:text-white px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 transition-colors"
           >
-            <RotateCcw className="w-3 h-3" />
-            <span>Reset All Filters</span>
+            <Filter className="w-3.5 h-3.5" />
+            <span>More Filters</span>
+            {advancedFilters.length > 0 && (
+              <span className="text-[10px] font-bold px-1.5 rounded-full bg-emerald-500/25 text-emerald-300">{advancedFilters.length}</span>
+            )}
+            <ChevronDown className={`w-3.5 h-3.5 transition-transform ${showMoreFilters ? 'rotate-180' : ''}`} />
           </button>
-        )}
+
+          {/* Reset Filter Button */}
+          {isFiltered && (
+            <button
+              onClick={onResetFilters}
+              className="flex items-center gap-1 text-xs text-slate-400 hover:text-white px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 transition-colors"
+            >
+              <RotateCcw className="w-3 h-3" />
+              <span>Reset All Filters</span>
+            </button>
+          )}
+        </div>
       </div>
 
-      {/* Filter Selectors Grid */}
+      {/* Active advanced-filter chips — visible even while the selector grid is collapsed, so filtered state is never hidden */}
+      {!showMoreFilters && advancedFilters.length > 0 && (
+        <div className="flex items-center flex-wrap gap-1.5 mb-3">
+          {advancedFilters.map((f) => (
+            <button
+              key={f.key}
+              onClick={f.clear}
+              className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/25 transition-all"
+            >
+              <span>{f.label}</span>
+              <X className="w-3 h-3" />
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Filter Selectors Grid — collapsed behind "More Filters" (Miller's Law: 3 presets + search stay the only always-visible controls) */}
+      {showMoreFilters && (
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 text-xs">
-        
+
         {/* Mode Selector */}
         <div>
           <label className="block text-[11px] font-medium text-slate-400 mb-1">
@@ -206,6 +254,7 @@ export const FilterToolbar: React.FC<FilterToolbarProps> = ({
         </div>
 
       </div>
+      )}
     </div>
   );
 };

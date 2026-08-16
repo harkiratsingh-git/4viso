@@ -1,5 +1,5 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { TransportLane, AlertNotification, AuditLogEntry, SupabaseSettings, SupabaseUser, CloudSyncState } from '../types';
+import { TransportLane, AlertNotification, AuditLogEntry, SupabaseSettings, SupabaseUser, CloudSyncState, RiskLevel } from '../types';
 import {
   mapRowToLane,
   mapLaneToRow,
@@ -357,6 +357,74 @@ values
     '4b227777d4dd1fc61c6f884f48641d02b4d121d3fd328cb08b5531fcacdabf8a', 'VERIFIED'
   )
 on conflict (id) do nothing;
+
+-- ==========================================================
+-- 8. CEIV Pharma certification + real hub network completeness
+-- ==========================================================
+
+alter table public.ports add column if not exists ceiv_pharma_certified boolean not null default false;
+
+-- Flag the real, verifiable IATA CEIV Pharma cargo communities already in this table.
+update public.ports set ceiv_pharma_certified = true
+where code in ('AMS','ATL','BOM','BRU','DXB','FRA','HKG','PVG','SIN','ZRH');
+
+-- Add the real CEIV hubs referenced in the network that this table is missing.
+insert into public.ports (code, name, city, country_code, port_type, latitude, longitude, has_cold_storage, has_gdp_certification, avg_customs_delay_hours, facility_risk_score, ceiv_pharma_certified)
+values
+  ('MIA', 'Miami International Airport', 'Miami', 'US', 'Air', 25.7959, -80.2870, true, true, 3.0, 88, true),
+  ('DFW', 'Dallas-Fort Worth International Airport', 'Dallas', 'US', 'Air', 32.8968, -97.0380, true, true, 3.0, 87, true),
+  ('HYD', 'Rajiv Gandhi International Airport', 'Hyderabad', 'IN', 'Air', 17.2403, 78.4294, true, true, 4.0, 84, true),
+  ('LGG', 'Liège Airport', 'Liège', 'BE', 'Air', 50.6374, 5.4432, true, true, 2.5, 90, true)
+on conflict (code) do nothing;
+
+-- ==========================================================
+-- 9. Corrected dashboard_summary — active_excursions/high_risk_lanes must derive from
+--    current_temp vs temp_min/temp_max directly, not from the lane's stored status text,
+--    or a lane can excurse without the dashboard ever reflecting it.
+-- ==========================================================
+
+create or replace view public.dashboard_summary as
+select
+  count(*)::int as total_lanes,
+  count(*) filter (where status in ('In Transit', 'Active'))::int as active_lanes,
+  count(*) filter (
+    where current_temp < temp_min or current_temp > temp_max
+       or risk_score >= 40 or risk_level in ('High', 'Critical')
+  )::int as high_risk_lanes,
+  round(avg(gdp_compliance_rate)::numeric, 1) as avg_gdp_compliance,
+  count(*) filter (where current_temp < temp_min or current_temp > temp_max)::int as active_excursions,
+  coalesce(sum(payload_value_usd), 0) as payload_in_transit_usd,
+  (select count(*) from public.alert_notifications where severity = 'Critical' and is_acknowledged = false)::int as unresolved_critical_alerts
+from public.transport_lanes;
+
+-- ==========================================================
+-- 10. Trigram search support for the top-nav lane search bar
+-- ==========================================================
+
+create extension if not exists pg_trgm;
+
+create index if not exists idx_lanes_search_trgm on public.transport_lanes
+  using gin (
+    (coalesce(lane_code, '') || ' ' || coalesce(origin_city, '') || ' ' || coalesce(destination_city, '') || ' ' || coalesce(carrier, '') || ' ' || coalesce(product_name, ''))
+    gin_trgm_ops
+  );
+
+-- RPC wrapper so PostgREST can actually query against the functional trigram index above
+-- (PostgREST filters can't reference a computed/concatenated expression directly).
+create or replace function public.search_lanes(p_query text)
+returns setof public.transport_lanes
+language sql
+stable
+as $$
+  select *
+  from public.transport_lanes
+  where (coalesce(lane_code, '') || ' ' || coalesce(origin_city, '') || ' ' || coalesce(destination_city, '') || ' ' || coalesce(carrier, '') || ' ' || coalesce(product_name, ''))
+    ilike '%' || p_query || '%'
+  order by similarity(
+    coalesce(lane_code, '') || ' ' || coalesce(origin_city, '') || ' ' || coalesce(destination_city, '') || ' ' || coalesce(carrier, '') || ' ' || coalesce(product_name, ''),
+    p_query
+  ) desc;
+$$;
 `;
 
 // Test live connection to Supabase instance
@@ -676,4 +744,96 @@ export async function fetchPortsFromSupabase(): Promise<PortEntry[] | null> {
     return null;
   }
   return data.map(mapPortsRowToEntry);
+}
+
+export interface DashboardSummary {
+  totalLanes: number;
+  activeLanes: number;
+  highRiskLanes: number;
+  avgGdpCompliance: number;
+  activeExcursions: number;
+  payloadInTransitUsd: number;
+  unresolvedCriticalAlerts: number;
+}
+
+/**
+ * Reads the real `dashboard_summary` view so every stat card shares one source of truth.
+ * Note: as of this writing the view's own active_excursions/high_risk_lanes columns are
+ * still keyed off the lanes' stored status rather than comparing current_temp against
+ * temp_min/temp_max directly, so they can under-report live excursions the same way the
+ * client-side fields used to — see the corrected view SQL in SUPABASE_SQL_MIGRATION.
+ */
+export async function fetchDashboardSummary(): Promise<DashboardSummary | null> {
+  const client = getSupabaseClient();
+  if (!client) return null;
+
+  const { data, error } = await client.from('dashboard_summary').select('*').maybeSingle();
+  if (error || !data) {
+    console.warn('Supabase dashboard_summary fetch notice:', error?.message);
+    return null;
+  }
+
+  return {
+    totalLanes: Number(data.total_lanes) || 0,
+    activeLanes: Number(data.active_lanes) || 0,
+    highRiskLanes: Number(data.high_risk_lanes) || 0,
+    avgGdpCompliance: Number(data.avg_gdp_compliance) || 0,
+    activeExcursions: Number(data.active_excursions) || 0,
+    payloadInTransitUsd: Number(data.payload_in_transit_usd) || 0,
+    unresolvedCriticalAlerts: Number(data.unresolved_critical_alerts) || 0,
+  };
+}
+
+/**
+ * Server-side lane search via the search_lanes(p_query) RPC, which queries the trigram
+ * GIN index (idx_lanes_search_trgm) instead of a client-side per-field scan. Returns null
+ * (not an empty array) when the RPC isn't available yet (e.g. migration not re-run), so
+ * callers can fall back to filtering the already-loaded lanes list client-side.
+ */
+export async function searchLanesRemote(query: string): Promise<TransportLane[] | null> {
+  const client = getSupabaseClient();
+  if (!client || !query.trim()) return null;
+
+  const { data, error } = await client.rpc('search_lanes', { p_query: query.trim() });
+  if (error || !data) {
+    console.warn('search_lanes RPC notice (falling back to client-side search):', error?.message);
+    return null;
+  }
+  return data.map((row: any) => mapRowToLane(row));
+}
+
+export interface LaneBaseRisk {
+  riskScore: number;
+  riskLevel: RiskLevel;
+}
+
+/**
+ * Calls the live `calculate_lane_base_risk(p_origin_iata, p_destination_iata, p_mode,
+ * p_temp_range_type)` DB function — the DB-side risk model used for the wizard's route
+ * comparison, so "your route" and "the suggested alternative" are scored by the exact same
+ * function a fresh direct query would use. Returns null (never throws) when the cloud isn't
+ * connected or the RPC isn't reachable, so callers can fall back to the local corridor
+ * assessment (`assessRoute`) alone.
+ */
+export async function calculateLaneBaseRisk(
+  originIata: string,
+  destinationIata: string,
+  mode: string,
+  tempRangeType: string
+): Promise<LaneBaseRisk | null> {
+  const client = getSupabaseClient();
+  if (!client) return null;
+
+  const { data, error } = await client.rpc('calculate_lane_base_risk', {
+    p_origin_iata: originIata,
+    p_destination_iata: destinationIata,
+    p_mode: mode,
+    p_temp_range_type: tempRangeType,
+  });
+  if (error || !data || !data[0]) {
+    console.warn('calculate_lane_base_risk RPC notice (falling back to local assessment):', error?.message);
+    return null;
+  }
+  const row = data[0];
+  return { riskScore: Number(row.risk_score) || 0, riskLevel: (row.risk_level as RiskLevel) || 'Low' };
 }

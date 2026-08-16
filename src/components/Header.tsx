@@ -39,6 +39,7 @@ interface HeaderProps {
   onToggleSimulation: () => void;
   onTriggerSimulatedExcursion: () => void;
   onResetData: () => void;
+  onOpenCommandPalette?: () => void;
 }
 
 export const USER_ROLES: UserRole[] = [
@@ -66,6 +67,7 @@ export const Header: React.FC<HeaderProps> = ({
   onToggleSimulation,
   onTriggerSimulatedExcursion,
   onResetData,
+  onOpenCommandPalette,
 }) => {
   const [isUserMenuOpen, setIsUserMenuOpen] = useState<boolean>(false);
   const criticalCount = unreadAlerts.filter(a => a.severity === 'Critical').length;
@@ -120,14 +122,22 @@ export const Header: React.FC<HeaderProps> = ({
             placeholder="Search lane, city, carrier (e.g. BRU-SIN, DHL)..."
             className="w-full pl-9 pr-4 py-1.5 text-xs bg-slate-950/70 text-slate-100 placeholder-slate-500 rounded-lg border border-slate-700 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/50 transition-all"
           />
-          {searchQuery && (
+          {searchQuery ? (
             <button
               onClick={() => onSearchChange('')}
               className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-white"
             >
               Clear
             </button>
-          )}
+          ) : onOpenCommandPalette ? (
+            <button
+              onClick={onOpenCommandPalette}
+              title="Open command palette: jump to any lane, or run a command"
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700 hover:text-slate-200 hover:border-slate-600 transition-colors"
+            >
+              ⌘K
+            </button>
+          ) : null}
         </div>
 
         {/* Controls, Role Selector & Action Buttons */}
@@ -150,10 +160,10 @@ export const Header: React.FC<HeaderProps> = ({
 
             <button
               onClick={onTriggerSimulatedExcursion}
-              className="px-2 py-1 rounded-md bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/20 text-[11px] font-medium flex items-center gap-1 transition-all"
-              title="Inject simulated temperature excursion into live fleet"
+              className="px-2 py-1 rounded-md bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/20 text-[11px] font-medium flex items-center gap-1 transition-all"
+              title="Inject simulated temperature excursion into live fleet (demo/test control — red is reserved for genuine unresolved alerts)"
             >
-              <AlertTriangle className="w-3 h-3 text-rose-400" />
+              <AlertTriangle className="w-3 h-3 text-amber-400" />
               <span className="hidden lg:inline">Excursion</span>
             </button>
 
@@ -303,9 +313,9 @@ export const Header: React.FC<HeaderProps> = ({
                         setIsUserMenuOpen(false);
                         if (onLogout) onLogout();
                       }}
-                      className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-rose-500/20 text-rose-300 flex items-center gap-2"
+                      className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-800 text-slate-300 hover:text-white flex items-center gap-2"
                     >
-                      <LogOut className="w-3.5 h-3.5 text-rose-400" />
+                      <LogOut className="w-3.5 h-3.5 text-slate-400" />
                       <span>Sign Out</span>
                     </button>
                   </div>

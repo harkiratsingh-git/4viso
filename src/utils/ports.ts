@@ -1,6 +1,7 @@
 import { RiskLevel, TransportMode } from '../types';
 import { AIRPORT_DIRECTORY } from './geo';
 import { REGIONAL_THERMAL_HOTSPOTS } from '../data/temperatureRiskData';
+import { haversineKm, isOnGreatCirclePath } from './geoMath';
 
 export interface PortEntry {
   code: string;
@@ -11,10 +12,22 @@ export interface PortEntry {
   portType: string;
   hasColdStorage: boolean;
   hasGdpCertification: boolean;
+  ceivPharmaCertified: boolean;
   avgCustomsDelayHours: number;
   facilityScore: number; // 0-100, higher = more reliable/certified
   isLive: boolean; // true if sourced from the connected Supabase project, false if from the static local directory
 }
+
+/**
+ * Ground-truth list of IATA CEIV Pharma certified cargo hubs. The live `ports` table's
+ * `ceiv_pharma_certified` column may not exist yet (it's added by a migration section in
+ * SUPABASE_SQL_MIGRATION that the user runs manually), so this hardcoded list is OR'd with
+ * whatever the live row reports rather than trusted exclusively — a hub certified in reality
+ * should never disappear from recommendations just because the migration hasn't run yet.
+ */
+const CEIV_PHARMA_CERTIFIED_CODES = new Set([
+  'BRU', 'FRA', 'AMS', 'ZRH', 'LGG', 'SIN', 'MIA', 'DFW', 'HKG', 'HYD', 'BOM', 'PVG', 'ATL', 'DXB', 'DWC',
+]);
 
 const COUNTRY_CODE_NAMES: Record<string, string> = {
   BE: 'Belgium', DE: 'Germany', NL: 'Netherlands', IT: 'Italy', FR: 'France', CH: 'Switzerland',
@@ -36,14 +49,16 @@ export const LOCAL_PORTS_FALLBACK: PortEntry[] = AIRPORT_DIRECTORY.map((a) => ({
   portType: 'Air',
   hasColdStorage: true,
   hasGdpCertification: true,
+  ceivPharmaCertified: CEIV_PHARMA_CERTIFIED_CODES.has(a.iata.toUpperCase()),
   avgCustomsDelayHours: 3,
   facilityScore: 80,
   isLive: false,
 }));
 
 export function mapPortsRowToEntry(row: any): PortEntry {
+  const code = String(row.code || '').toUpperCase();
   return {
-    code: String(row.code || '').toUpperCase(),
+    code,
     name: String(row.name || row.code || ''),
     city: String(row.city || ''),
     country: COUNTRY_CODE_NAMES[String(row.country_code || '').toUpperCase()] || String(row.country_code || ''),
@@ -51,6 +66,7 @@ export function mapPortsRowToEntry(row: any): PortEntry {
     portType: String(row.port_type || 'Air'),
     hasColdStorage: Boolean(row.has_cold_storage),
     hasGdpCertification: Boolean(row.has_gdp_certification),
+    ceivPharmaCertified: Boolean(row.ceiv_pharma_certified) || CEIV_PHARMA_CERTIFIED_CODES.has(code),
     avgCustomsDelayHours: Number(row.avg_customs_delay_hours) || 0,
     facilityScore: Number(row.facility_risk_score) || 0,
     isLive: true,
@@ -89,16 +105,6 @@ export function searchPorts(ports: PortEntry[], query: string, limit = 8): PortE
     .map((s) => s.p);
 }
 
-function haversineKm(a: [number, number], b: [number, number]): number {
-  const R = 6371;
-  const dLat = ((b[0] - a[0]) * Math.PI) / 180;
-  const dLng = ((b[1] - a[1]) * Math.PI) / 180;
-  const lat1 = (a[0] * Math.PI) / 180;
-  const lat2 = (b[0] * Math.PI) / 180;
-  const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
-  return 2 * R * Math.asin(Math.sqrt(h));
-}
-
 // ---------------------------------------------------------------------------
 // Transport mode recommendation
 // ---------------------------------------------------------------------------
@@ -108,16 +114,27 @@ export interface ModeRecommendation {
   reason: string;
 }
 
+/** Sea mode is only realistic where a genuinely sea-capable port sits near both ends of the route. */
+const SEA_PORT_PROXIMITY_KM = 200;
+
+function hasSeaCapablePortNear(coords: [number, number], ports: PortEntry[]): boolean {
+  return ports.some(
+    (p) => (p.portType === 'Sea' || p.portType === 'Multimodal') && haversineKm(coords, p.coords) <= SEA_PORT_PROXIMITY_KM
+  );
+}
+
 export function recommendTransportMode(
   originCoords: [number, number],
   destCoords: [number, number],
   tempMin: number,
   tempMax: number,
-  productCategory: string
+  productCategory: string,
+  ports: PortEntry[] = []
 ): ModeRecommendation {
   const distanceKm = Math.round(haversineKm(originCoords, destCoords));
   const isUltraSensitive = productCategory === 'Vaccines' || productCategory === 'Cell Therapy' || tempMin <= -15;
   const isRoutine = productCategory === 'Active Ingredients' || (tempMin >= 14 && tempMax <= 25);
+  const seaViable = hasSeaCapablePortNear(originCoords, ports) && hasSeaCapablePortNear(destCoords, ports);
 
   if (distanceKm < 900) {
     return { mode: 'Road', reason: `Only ${distanceKm}km — door-to-door road transport avoids extra handling and keeps temperature control simplest.` };
@@ -125,11 +142,14 @@ export function recommendTransportMode(
   if (isUltraSensitive) {
     return { mode: 'Air', reason: `${productCategory} has a narrow safe window — air is the only mode fast enough over ${distanceKm}km to protect it.` };
   }
-  if (distanceKm > 7000 && isRoutine) {
-    return { mode: 'Sea', reason: `${distanceKm}km with a stable, non-urgent payload — sea reefer is far cheaper and the product tolerates the longer transit.` };
+  if (distanceKm > 7000 && isRoutine && seaViable) {
+    return { mode: 'Sea', reason: `${distanceKm}km with a stable, non-urgent payload, and a sea-capable port sits near both ends — reefer container is far cheaper and the product tolerates the longer transit.` };
   }
   if (distanceKm > 4000) {
-    return { mode: 'Multimodal', reason: `${distanceKm}km is long-haul but not maximally time-critical — combining air/sea/road legs balances cost and speed.` };
+    const noSeaNote = isRoutine && distanceKm > 7000 && !seaViable
+      ? ' No sea-capable port sits near both ends of this route, so'
+      : ' Long-haul but not maximally time-critical, so';
+    return { mode: 'Multimodal', reason: `${distanceKm}km route.${noSeaNote} combining air/road legs balances cost and speed.` };
   }
   return { mode: 'Air', reason: `${distanceKm}km intercontinental route — air keeps transit time (and thermal exposure) low.` };
 }
@@ -144,6 +164,30 @@ export interface StopRecommendation {
   reason: string;
 }
 
+/**
+ * Max perpendicular ("cross-track") distance in km a candidate stop may sit from the
+ * origin→destination great-circle line to still count as genuinely "on the way". Exposed as a
+ * parameter (not hardcoded) so callers can widen/narrow it — e.g. a route comparison view might
+ * want to show a couple of near-miss alternatives at a looser corridor.
+ */
+export const DEFAULT_STOP_CORRIDOR_KM = 500;
+
+/**
+ * Max realistic nonstop range in km for a mode before a real carrier would need an
+ * intermediate stop at all. This matters independently of how close a candidate hub sits to
+ * the great-circle path: a hub can be geometrically almost exactly on that path (e.g.
+ * Frankfurt sits only ~60km of cross-track deviation from the Paris→Singapore great circle,
+ * and adds under 5km of total detour, purely because Central European hubs happen to sit
+ * near the initial great-circle bearing toward Southeast Asia) and still be the wrong
+ * suggestion, because modern long-haul cargo aircraft fly routes like Paris→Singapore
+ * (~10,700km) nonstop — no real operator would insert a layover there. Sea/Multimodal aren't
+ * gated by this since intermediate port calls / mode changes are normal regardless of range.
+ */
+const DIRECT_RANGE_KM_BY_MODE: Partial<Record<TransportMode, number>> = {
+  Air: 12000,
+  Road: 900,
+};
+
 export function recommendStops(
   originCoords: [number, number],
   destCoords: [number, number],
@@ -152,9 +196,14 @@ export function recommendStops(
   tempMin: number,
   tempMax: number,
   ports: PortEntry[],
-  limit = 3
+  mode: TransportMode = 'Air',
+  limit = 3,
+  corridorKm = DEFAULT_STOP_CORRIDOR_KM
 ): StopRecommendation[] {
   const directKm = haversineKm(originCoords, destCoords);
+  const rangeCap = DIRECT_RANGE_KM_BY_MODE[mode];
+  if (rangeCap !== undefined && directKm <= rangeCap) return [];
+
   const isColdSensitive = tempMax <= 25;
 
   const isNearExtremeHeat = (coords: [number, number]) =>
@@ -164,22 +213,28 @@ export function recommendStops(
 
   const candidates = ports
     .filter((p) => p.code !== originCode.toUpperCase() && p.code !== destCode.toUpperCase())
+    // Only a real CEIV Pharma or GDP-certified hub is eligible — a high facility score alone
+    // isn't enough, and it must sit genuinely near the great-circle path (not just be
+    // "somewhat close" to both endpoints, which a backwards-direction hub can satisfy too).
+    .filter((p) => p.ceivPharmaCertified || p.hasGdpCertification)
+    .filter((p) => isOnGreatCirclePath(p.coords, originCoords, destCoords, corridorKm))
     .map((p) => {
-      const detourKm = haversineKm(originCoords, p.coords) + haversineKm(p.coords, destCoords) - directKm;
+      const detourKm = Math.round(haversineKm(originCoords, p.coords) + haversineKm(p.coords, destCoords) - directKm);
       let score = p.facilityScore;
       if (isColdSensitive && p.hasColdStorage) score += 20;
-      if (p.hasGdpCertification) score += 20;
+      if (p.hasGdpCertification) score += 15;
+      if (p.ceivPharmaCertified) score += 25; // strongest pharma-specific certification signal
       if (isColdSensitive && isNearExtremeHeat(p.coords)) score -= 40;
-      score -= Math.min(60, detourKm / 100); // penalize being far off the direct path
-      return { port: p, detourKm: Math.round(detourKm), score };
+      score -= Math.min(60, detourKm / 100); // still penalize added distance among on-path candidates
+      return { port: p, detourKm, score };
     })
-    .filter((c) => c.detourKm < directKm * 0.6 + 1500) // only genuinely "on the way" candidates
     .sort((a, b) => b.score - a.score)
     .slice(0, limit);
 
   return candidates.map((c) => {
     const bits: string[] = [];
-    if (c.port.hasGdpCertification) bits.push('GDP certified');
+    if (c.port.ceivPharmaCertified) bits.push('CEIV Pharma certified');
+    else if (c.port.hasGdpCertification) bits.push('GDP certified');
     if (isColdSensitive && c.port.hasColdStorage) bits.push('cold storage on-site');
     bits.push(`~${c.detourKm}km detour`);
     bits.push(`facility score ${c.port.facilityScore}/100`);

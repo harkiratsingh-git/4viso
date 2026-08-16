@@ -2,35 +2,32 @@ import React, { useState } from 'react';
 import {
   Globe2,
   Layers,
-  Flame,
-  Map as MapIcon
+  Flame
 } from 'lucide-react';
 import { TransportLane } from '../types';
 import { RegionalTemperatureHeatmapView } from './RegionalTemperatureHeatmapView';
-import { GoogleMapsNetworkView } from './GoogleMapsNetworkView';
 import { WorldRouteMap } from './WorldRouteMap';
+import { isLaneHighRisk, isLaneExcursing } from '../utils/laneRisk';
 
 interface GlobalNetworkMapProps {
   lanes: TransportLane[];
   selectedLaneId: string | null;
   onSelectLane: (lane: TransportLane) => void;
-  onOpenGoogleMapsConfig?: () => void;
 }
 
 export const GlobalNetworkMap: React.FC<GlobalNetworkMapProps> = ({
   lanes,
   selectedLaneId,
   onSelectLane,
-  onOpenGoogleMapsConfig
 }) => {
-  const [activeSubView, setActiveSubView] = useState<'CORRIDORS' | 'HEATMAP' | 'GOOGLE_MAPS'>('HEATMAP');
+  const [activeSubView, setActiveSubView] = useState<'CORRIDORS' | 'HEATMAP'>('HEATMAP');
   const [filterMode, setFilterMode] = useState<'ALL' | 'AIR' | 'SEA' | 'ROAD' | 'ALERTS'>('ALL');
 
   const visibleLanes = lanes.filter(l => {
     if (filterMode === 'AIR') return l.mode === 'Air';
     if (filterMode === 'SEA') return l.mode === 'Sea';
     if (filterMode === 'ROAD') return l.mode === 'Road' || l.mode === 'Multimodal';
-    if (filterMode === 'ALERTS') return l.riskScore >= 40 || l.status === 'Temperature Alert' || l.status === 'Delayed';
+    if (filterMode === 'ALERTS') return isLaneHighRisk(l) || isLaneExcursing(l) || l.status === 'Delayed';
     return true;
   });
 
@@ -51,7 +48,7 @@ export const GlobalNetworkMap: React.FC<GlobalNetworkMapProps> = ({
               </span>
             </h2>
             <p className="text-xs text-slate-400">
-              Multi-modal corridor tracking, regional microclimate heatmaps, and Google Maps GIS intelligence
+              Multi-modal corridor tracking and regional microclimate thermal heatmaps, both on real world geography
             </p>
           </div>
         </div>
@@ -81,18 +78,6 @@ export const GlobalNetworkMap: React.FC<GlobalNetworkMapProps> = ({
             <Layers className="w-3.5 h-3.5 text-teal-400" />
             World Map
           </button>
-
-          <button
-            onClick={() => setActiveSubView('GOOGLE_MAPS')}
-            className={`px-3 py-1.5 rounded-lg font-medium transition-all flex items-center gap-1.5 ${
-              activeSubView === 'GOOGLE_MAPS'
-                ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30 shadow-sm'
-                : 'text-slate-500 hover:text-slate-300'
-            }`}
-          >
-            <MapIcon className="w-3.5 h-3.5 text-blue-400" />
-            Google Maps (Optional)
-          </button>
         </div>
       </div>
 
@@ -105,18 +90,7 @@ export const GlobalNetworkMap: React.FC<GlobalNetworkMapProps> = ({
         />
       )}
 
-      {/* SUB-VIEW 2: GOOGLE MAPS PLATFORM GIS */}
-      {activeSubView === 'GOOGLE_MAPS' && (
-        <GoogleMapsNetworkView
-          lanes={visibleLanes}
-          selectedLaneId={selectedLaneId}
-          onSelectLane={onSelectLane}
-          showThermalHeatmap={true}
-          onOpenApiKeyHelp={onOpenGoogleMapsConfig}
-        />
-      )}
-
-      {/* SUB-VIEW 3: REAL-WORLD GEOGRAPHIC MAP */}
+      {/* SUB-VIEW 2: REAL-WORLD GEOGRAPHIC MAP */}
       {activeSubView === 'CORRIDORS' && (
         <div>
           {/* Mode Filters Bar */}

@@ -4,6 +4,7 @@ import { ShieldCheck } from 'lucide-react';
 import { TransportLane } from '../types';
 import { getRiskColor } from '../utils/formatters';
 import { usePorts } from '../contexts/PortsContext';
+import { getEffectiveRiskLevel, getEffectiveRiskScore } from '../utils/laneRisk';
 
 const geoUrl = 'https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json';
 
@@ -48,7 +49,7 @@ export const WorldRouteMap: React.FC<WorldRouteMapProps> = ({ lanes, selectedLan
         {lanes.map((lane) => {
           const points: [number, number][] = [lane.originCoords, ...lane.stops.map((s) => s.coords), lane.destinationCoords];
           const isSelected = selectedLaneId === lane.id;
-          const color = getRiskColor(lane.riskLevel).fill;
+          const color = getRiskColor(getEffectiveRiskLevel(lane)).fill;
 
           return (
             <g
@@ -126,9 +127,9 @@ export const WorldRouteMap: React.FC<WorldRouteMapProps> = ({ lanes, selectedLan
             </span>
             <span
               className="px-2 py-0.5 rounded text-[10px] font-bold"
-              style={{ backgroundColor: `${getRiskColor(activeLane.riskLevel).fill}22`, color: getRiskColor(activeLane.riskLevel).fill }}
+              style={{ backgroundColor: `${getRiskColor(getEffectiveRiskLevel(activeLane)).fill}22`, color: getRiskColor(getEffectiveRiskLevel(activeLane)).fill }}
             >
-              Risk {activeLane.riskScore}%
+              Risk {getEffectiveRiskScore(activeLane)}%
             </span>
           </div>
           <div className="text-slate-300 font-medium">

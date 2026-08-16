@@ -1,21 +1,12 @@
 import { RegionalThermalHotspot, RiskLevel, TransportMode } from '../types';
 import { REGIONAL_THERMAL_HOTSPOTS } from '../data/temperatureRiskData';
+import { haversineKm } from './geoMath';
 
 // Hubs with no known thermal hotspot exposure in REGIONAL_THERMAL_HOTSPOTS, used as
 // suggested low-risk alternatives when a route leg is flagged.
 const KNOWN_LOW_RISK_HUBS = ['FRA', 'AMS', 'ZRH', 'BRU', 'NRT', 'DUB', 'BSL'];
 
 const HOTSPOT_INFLUENCE_RADIUS_KM = 700;
-
-function haversineKm(a: [number, number], b: [number, number]): number {
-  const R = 6371;
-  const dLat = ((b[0] - a[0]) * Math.PI) / 180;
-  const dLng = ((b[1] - a[1]) * Math.PI) / 180;
-  const lat1 = (a[0] * Math.PI) / 180;
-  const lat2 = (b[0] * Math.PI) / 180;
-  const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
-  return 2 * R * Math.asin(Math.sqrt(h));
-}
 
 export interface RouteLegPoint {
   label: string; // 'Origin' | 'Stop 1' | ... | 'Destination'

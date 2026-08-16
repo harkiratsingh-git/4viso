@@ -1,15 +1,16 @@
 import React, { useState } from 'react';
-import { 
-  Flame, 
-  Thermometer, 
-  Sun, 
-  Droplets, 
-  Wind, 
-  AlertTriangle, 
-  ShieldAlert, 
-  Layers, 
-  Eye, 
-  Sliders, 
+import { ComposableMap, Geographies, Geography, Marker, Line } from 'react-simple-maps';
+import {
+  Flame,
+  Thermometer,
+  Sun,
+  Droplets,
+  Wind,
+  AlertTriangle,
+  ShieldAlert,
+  Layers,
+  Eye,
+  Sliders,
   Info,
   MapPin,
   CheckCircle2,
@@ -20,7 +21,11 @@ import {
 } from 'lucide-react';
 import { TransportLane, RegionalThermalHotspot, HeatmapConfig } from '../types';
 import { REGIONAL_THERMAL_HOTSPOTS, getThermalRiskColor } from '../data/temperatureRiskData';
-import { projectMercator as projectCoordinates, buildMultiStopPathD } from '../utils/routePath';
+
+const geoUrl = 'https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json';
+
+// react-simple-maps takes [lng, lat]; the rest of the app stores coords as [lat, lng].
+const toLngLat = (coords: [number, number]): [number, number] => [coords[1], coords[0]];
 
 interface RegionalTemperatureHeatmapViewProps {
   lanes: TransportLane[];
@@ -131,13 +136,8 @@ export const RegionalTemperatureHeatmapView: React.FC<RegionalTemperatureHeatmap
       {/* Primary Interactive Heatmap Display */}
       <div className="relative w-full aspect-[2/1] min-h-[340px] max-h-[480px] bg-slate-950 rounded-xl border border-slate-800 overflow-hidden">
         
-        <svg viewBox="0 0 1000 500" className="w-full h-full select-none">
+        <ComposableMap projectionConfig={{ scale: 145 }} style={{ width: '100%', height: '100%' }}>
           <defs>
-            {/* Background Grid */}
-            <pattern id="heatmap-grid" width="40" height="40" patternUnits="userSpaceOnUse">
-              <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" strokeWidth="0.5" strokeOpacity="0.3" />
-            </pattern>
-
             {/* Radial Thermal Gradients for each hotspot */}
             {REGIONAL_THERMAL_HOTSPOTS.map((h) => {
               const isFreeze = h.thermalRiskLevel === 'Sub-Zero Freeze';
@@ -167,45 +167,39 @@ export const RegionalTemperatureHeatmapView: React.FC<RegionalTemperatureHeatmap
 
             {/* Gaussian Blur Filter for natural Heatmap Diffusion */}
             <filter id="thermal-diffusion" x="-50%" y="-50%" width="200%" height="200%">
-              <feGaussianBlur stdDeviation="8" result="blur" />
+              <feGaussianBlur stdDeviation="6" result="blur" />
               <feComposite in="SourceGraphic" in2="blur" operator="over" />
             </filter>
           </defs>
 
-          {/* Canvas Background */}
-          <rect width="1000" height="500" fill="#080c14" />
-          <rect width="1000" height="500" fill="url(#heatmap-grid)" />
-
-          {/* Continents Base Map */}
-          <g fill="#101927" stroke="#1c2b3f" strokeWidth="0.75" opacity="0.65">
-            {/* North America */}
-            <path d="M 120 90 Q 200 80 260 110 T 320 160 Q 290 220 220 250 T 170 230 Q 140 180 120 90 Z" />
-            {/* South America */}
-            <path d="M 270 270 Q 340 290 320 380 T 260 460 Q 240 400 250 320 Z" />
-            {/* Europe */}
-            <path d="M 460 100 Q 550 90 560 140 T 490 200 Q 450 180 460 100 Z" />
-            {/* Africa */}
-            <path d="M 470 210 Q 560 210 570 300 T 520 420 Q 460 380 450 280 Z" />
-            {/* Asia */}
-            <path d="M 570 90 Q 750 80 840 140 T 800 280 Q 680 260 620 200 Z" />
-            {/* Australia */}
-            <path d="M 770 340 Q 860 330 870 400 T 780 430 Q 750 380 770 340 Z" />
-          </g>
+          {/* Real Country Geography Base Map */}
+          <Geographies geography={geoUrl}>
+            {({ geographies }) =>
+              geographies.map((geo) => (
+                <Geography
+                  key={geo.rsmKey}
+                  geography={geo}
+                  fill="#101927"
+                  stroke="#1c2b3f"
+                  strokeWidth={0.5}
+                  style={{
+                    default: { outline: 'none' },
+                    hover: { outline: 'none', fill: '#152238' },
+                    pressed: { outline: 'none' },
+                  }}
+                />
+              ))
+            }
+          </Geographies>
 
           {/* Thermal Heat Map Density Blobs (Layer 1) */}
           <g filter="url(#thermal-diffusion)">
             {filteredHotspots.map((h) => {
-              const [x, y] = projectCoordinates(h.coords[0], h.coords[1]);
-              const radius = h.thermalRiskLevel === 'Extreme Heat' ? 65 : h.thermalRiskLevel === 'High Heat' ? 52 : 44;
-
+              const radius = h.thermalRiskLevel === 'Extreme Heat' ? 30 : h.thermalRiskLevel === 'High Heat' ? 24 : 20;
               return (
-                <circle
-                  key={`blob-${h.id}`}
-                  cx={x}
-                  cy={y}
-                  r={radius}
-                  fill={`url(#heat-grad-${h.id})`}
-                />
+                <Marker key={`blob-${h.id}`} coordinates={toLngLat(h.coords)}>
+                  <circle r={radius} fill={`url(#heat-grad-${h.id})`} />
+                </Marker>
               );
             })}
           </g>
@@ -213,86 +207,60 @@ export const RegionalTemperatureHeatmapView: React.FC<RegionalTemperatureHeatmap
           {/* Thermal Isochrone Contour Rings (Layer 2) */}
           {showContours &&
             filteredHotspots.map((h) => {
-              const [x, y] = projectCoordinates(h.coords[0], h.coords[1]);
               const isExtreme = h.thermalRiskLevel === 'Extreme Heat';
               const isFreeze = h.thermalRiskLevel === 'Sub-Zero Freeze';
               const ringColor = isExtreme ? '#f87171' : isFreeze ? '#818cf8' : '#fb923c';
 
               return (
-                <g key={`contour-${h.id}`} opacity="0.6">
-                  <circle
-                    cx={x}
-                    cy={y}
-                    r="28"
-                    fill="none"
-                    stroke={ringColor}
-                    strokeWidth="0.8"
-                    strokeDasharray="3,3"
-                  />
-                  <circle
-                    cx={x}
-                    cy={y}
-                    r="48"
-                    fill="none"
-                    stroke={ringColor}
-                    strokeWidth="0.5"
-                    strokeOpacity="0.5"
-                  />
-                </g>
+                <Marker key={`contour-${h.id}`} coordinates={toLngLat(h.coords)}>
+                  <g opacity="0.6">
+                    <circle r="13" fill="none" stroke={ringColor} strokeWidth="0.8" strokeDasharray="3,3" />
+                    <circle r="22" fill="none" stroke={ringColor} strokeWidth="0.5" strokeOpacity="0.5" />
+                  </g>
+                </Marker>
               );
             })}
 
-          {/* Active Lane Corridors overlay (Layer 3) */}
+          {/* Active Lane Corridors overlay (Layer 3), through any intermediate stops */}
           {showLaneCorridors &&
             lanes.map((lane) => {
-              const routePoints: [number, number][] = [
-                projectCoordinates(lane.originCoords[0], lane.originCoords[1]),
-                ...lane.stops.map((s) => projectCoordinates(s.coords[0], s.coords[1])),
-                projectCoordinates(lane.destinationCoords[0], lane.destinationCoords[1]),
-              ];
-              const pathD = buildMultiStopPathD(routePoints);
-
+              const points: [number, number][] = [lane.originCoords, ...lane.stops.map((s) => s.coords), lane.destinationCoords];
               const isSelected = selectedLaneId === lane.id;
 
               return (
                 <g key={`lane-arc-${lane.id}`} onClick={() => onSelectLane(lane)} className="cursor-pointer">
-                  <path
-                    d={pathD}
-                    fill="none"
-                    stroke="#ffffff"
-                    strokeWidth={isSelected ? 2.5 : 1.2}
-                    strokeOpacity={isSelected ? 0.9 : 0.35}
-                    strokeDasharray="4,4"
-                  />
+                  {points.slice(0, -1).map((p, i) => (
+                    <Line
+                      key={i}
+                      from={toLngLat(p)}
+                      to={toLngLat(points[i + 1])}
+                      stroke="#ffffff"
+                      strokeWidth={isSelected ? 2.5 : 1.2}
+                      strokeOpacity={isSelected ? 0.9 : 0.35}
+                      strokeDasharray="4,4"
+                    />
+                  ))}
                 </g>
               );
             })}
 
           {/* Thermal Hotspot Markers & Telemetry Pins (Layer 4) */}
           {filteredHotspots.map((h) => {
-            const [x, y] = projectCoordinates(h.coords[0], h.coords[1]);
             const isSelected = selectedHotspot?.id === h.id;
             const isExtreme = h.thermalRiskLevel === 'Extreme Heat';
             const isFreeze = h.thermalRiskLevel === 'Sub-Zero Freeze';
-
             const badgeBg = isExtreme ? '#dc2626' : isFreeze ? '#4f46e5' : '#ea580c';
 
             return (
-              <g
+              <Marker
                 key={`pin-${h.id}`}
-                transform={`translate(${x}, ${y})`}
+                coordinates={toLngLat(h.coords)}
                 onClick={() => setSelectedHotspot(h)}
                 className="cursor-pointer group"
               >
                 {/* Pulse Ring for Extreme & Freeze */}
                 {(isExtreme || isFreeze) && (
-                  <circle
-                    r={isSelected ? 16 : 12}
-                    fill="none"
-                    stroke={badgeBg}
-                    strokeWidth="1.5"
-                    opacity="0.8"
-                  >
+                  <circle r={isSelected ? 16 : 12} fill="none" stroke={badgeBg} strokeWidth="1.5" opacity="0.8">
                     <animate attributeName="r" values="8;20;8" dur="2s" repeatCount="indefinite" />
                     <animate attributeName="opacity" values="0.8;0;0.8" dur="2s" repeatCount="indefinite" />
                   </circle>
@@ -310,7 +278,7 @@ export const RegionalTemperatureHeatmapView: React.FC<RegionalTemperatureHeatmap
                 {/* Temperature Label */}
                 <rect
                   x="-18"
-                  y={isSelected ? "-24" : "-20"}
+                  y={isSelected ? '-24' : '-20'}
                   width="36"
                   height="14"
                   rx="3"
@@ -321,7 +289,7 @@ export const RegionalTemperatureHeatmapView: React.FC<RegionalTemperatureHeatmap
                 />
                 <text
                   x="0"
-                  y={isSelected ? "-14" : "-10"}
+                  y={isSelected ? '-14' : '-10'}
                   fill="#ffffff"
                   fontSize="8"
                   textAnchor="middle"
@@ -330,10 +298,10 @@ export const RegionalTemperatureHeatmapView: React.FC<RegionalTemperatureHeatmap
                 >
                   {h.ambientTempC > 0 ? `+${h.ambientTempC}` : h.ambientTempC}°
                 </text>
-              </g>
+              </Marker>
             );
           })}
-        </svg>
+        </ComposableMap>
 
         {/* Floating Heatmap Scale Legend */}
         <div className="absolute bottom-3 right-3 bg-slate-900/90 backdrop-blur-md border border-slate-800 rounded-lg p-2.5 text-xs text-slate-300 shadow-xl max-w-xs">

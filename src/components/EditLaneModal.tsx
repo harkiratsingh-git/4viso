@@ -64,8 +64,8 @@ export const EditLaneModal: React.FC<EditLaneModalProps> = ({ lane, onClose, onS
   };
 
   const modeRecommendation = useMemo(
-    () => (origin.iata && destination.iata ? recommendTransportMode(origin.coords, destination.coords, tempMin, tempMax, productCategory) : null),
-    [origin, destination, tempMin, tempMax, productCategory]
+    () => (origin.iata && destination.iata ? recommendTransportMode(origin.coords, destination.coords, tempMin, tempMax, productCategory, ports) : null),
+    [origin, destination, tempMin, tempMax, productCategory, ports]
   );
 
   const certificationIssues = useMemo(() => {
@@ -123,7 +123,7 @@ export const EditLaneModal: React.FC<EditLaneModalProps> = ({ lane, onClose, onS
             </div>
           </div>
 
-          <RouteStopsEditor origin={origin} destination={destination} stops={stops} onStopsChange={setStops} tempMin={tempMin} tempMax={tempMax} />
+          <RouteStopsEditor origin={origin} destination={destination} stops={stops} onStopsChange={setStops} tempMin={tempMin} tempMax={tempMax} mode={mode} />
 
           {/* Transport Mode */}
           <div className="p-3 rounded-xl bg-slate-950/80 border border-slate-800 space-y-2">
