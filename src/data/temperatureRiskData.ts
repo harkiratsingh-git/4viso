@@ -13,7 +13,7 @@ export const REGIONAL_THERMAL_HOTSPOTS: RegionalThermalHotspot[] = [
     thermalRiskLevel: 'Extreme Heat',
     riskScore: 92,
     activeLanesCount: 3,
-    affectedLaneCodes: ['BRU-SIN-01', 'DXB-JNB-03', 'FRA-SIN-02'],
+    affectedLaneCodes: ['DEMO-BRU-SIN-01', 'DEMO-DXB-JNB-03', 'DEMO-FRA-SIN-02'],
     coldStorageFacilityRating: 'IATA CEIV Pharma Certified (Pharma Cargo Cool Dolls Active)',
     tarmacExposureRiskMins: 8,
     recommendation: 'Mandatory thermal blanket cover (TSS VIP-Shield) & refrigerated high-loader dollies on tarmac.'
@@ -30,7 +30,7 @@ export const REGIONAL_THERMAL_HOTSPOTS: RegionalThermalHotspot[] = [
     thermalRiskLevel: 'High Heat',
     riskScore: 74,
     activeLanesCount: 4,
-    affectedLaneCodes: ['BRU-SIN-01', 'FRA-SIN-02', 'BOM-SIN-06'],
+    affectedLaneCodes: ['DEMO-BRU-SIN-01', 'DEMO-FRA-SIN-02', 'DEMO-BOM-SIN-06'],
     coldStorageFacilityRating: 'SATS Coolport + dnata CoolChain Centre',
     tarmacExposureRiskMins: 18,
     recommendation: 'High-humidity condensation prevention active; utilize sealed moisture-barrier secondary packaging.'
@@ -47,7 +47,7 @@ export const REGIONAL_THERMAL_HOTSPOTS: RegionalThermalHotspot[] = [
     thermalRiskLevel: 'Extreme Heat',
     riskScore: 88,
     activeLanesCount: 2,
-    affectedLaneCodes: ['RTM-SHA-03'],
+    affectedLaneCodes: ['DEMO-RTM-SHA-03'],
     coldStorageFacilityRating: 'Ocean Reefer GenSet Dual Telemetry',
     tarmacExposureRiskMins: 12,
     recommendation: 'Monitor redundant diesel generator fuel levels and daily reefer compressor duty-cycle telemetry.'
@@ -64,7 +64,7 @@ export const REGIONAL_THERMAL_HOTSPOTS: RegionalThermalHotspot[] = [
     thermalRiskLevel: 'High Heat',
     riskScore: 78,
     activeLanesCount: 3,
-    affectedLaneCodes: ['MIA-GRU-05', 'JFK-MIA-08'],
+    affectedLaneCodes: ['DEMO-MIA-GRU-05', 'DEMO-JFK-MIA-08'],
     coldStorageFacilityRating: 'IATA CEIV Certified Cargo Hub',
     tarmacExposureRiskMins: 15,
     recommendation: 'Tropical convective cloudburst alert; verify waterproof thermal over-pack shields.'
@@ -81,7 +81,7 @@ export const REGIONAL_THERMAL_HOTSPOTS: RegionalThermalHotspot[] = [
     thermalRiskLevel: 'High Heat',
     riskScore: 82,
     activeLanesCount: 2,
-    affectedLaneCodes: ['BOM-SIN-06', 'BOM-FRA-09'],
+    affectedLaneCodes: ['DEMO-BOM-SIN-06', 'DEMO-BOM-FRA-09'],
     coldStorageFacilityRating: 'CEIV Pharma Dedicated Cold Zone (Air India / Adani)',
     tarmacExposureRiskMins: 14,
     recommendation: 'Heavy rainfall tarmac delay protocol active; enforce maximum 12-minute staging threshold.'
@@ -98,7 +98,7 @@ export const REGIONAL_THERMAL_HOTSPOTS: RegionalThermalHotspot[] = [
     thermalRiskLevel: 'Moderate',
     riskScore: 54,
     activeLanesCount: 2,
-    affectedLaneCodes: ['MIA-GRU-05'],
+    affectedLaneCodes: ['DEMO-MIA-GRU-05'],
     coldStorageFacilityRating: 'GRU Airport Pharma Hub 15-25°C & 2-8°C Active',
     tarmacExposureRiskMins: 25,
     recommendation: 'Customs clearance pre-validation reduces warehouse staging time from 4.2h to 45 mins.'
@@ -115,7 +115,7 @@ export const REGIONAL_THERMAL_HOTSPOTS: RegionalThermalHotspot[] = [
     thermalRiskLevel: 'Optimal Controlled',
     riskScore: 22,
     activeLanesCount: 5,
-    affectedLaneCodes: ['FRA-JFK-04', 'BRU-SIN-01', 'FRA-SIN-02'],
+    affectedLaneCodes: ['DEMO-FRA-JFK-04', 'DEMO-BRU-SIN-01', 'DEMO-FRA-SIN-02'],
     coldStorageFacilityRating: 'Lufthansa Cargo Cool Center (World-Class GDP Master Facility)',
     tarmacExposureRiskMins: 45,
     recommendation: 'Optimal ambient window. Automated thermal tracking active with <0.1°C variance.'
@@ -132,7 +132,7 @@ export const REGIONAL_THERMAL_HOTSPOTS: RegionalThermalHotspot[] = [
     thermalRiskLevel: 'Moderate',
     riskScore: 42,
     activeLanesCount: 3,
-    affectedLaneCodes: ['ICN-LAX-07', 'SHA-ICN-02'],
+    affectedLaneCodes: ['DEMO-ICN-LAX-07', 'DEMO-SHA-ICN-02'],
     coldStorageFacilityRating: 'Korean Air & Asiana CEIV Pharma Centers',
     tarmacExposureRiskMins: 30,
     recommendation: 'Standard GDP handling; tarmac cool-dollies deployed for biologic payloads.'
@@ -149,7 +149,7 @@ export const REGIONAL_THERMAL_HOTSPOTS: RegionalThermalHotspot[] = [
     thermalRiskLevel: 'Sub-Zero Freeze',
     riskScore: 76,
     activeLanesCount: 2,
-    affectedLaneCodes: ['NRT-ANC-JFK-01', 'ICN-ANC-ORD-04'],
+    affectedLaneCodes: ['DEMO-NRT-ANC-JFK-01', 'DEMO-ICN-ANC-ORD-04'],
     coldStorageFacilityRating: 'Heated Apron Transition Warehousing',
     tarmacExposureRiskMins: 10,
     recommendation: 'Risk of freezing excursion (<+2°C) for liquid mRNA/biologics. Active heating cargo blankets deployed.'
@@ -166,7 +166,7 @@ export const REGIONAL_THERMAL_HOTSPOTS: RegionalThermalHotspot[] = [
     thermalRiskLevel: 'Moderate',
     riskScore: 35,
     activeLanesCount: 3,
-    affectedLaneCodes: ['FRA-JFK-04', 'ORD-LHR-02'],
+    affectedLaneCodes: ['DEMO-FRA-JFK-04', 'DEMO-ORD-LHR-02'],
     coldStorageFacilityRating: 'Swissport Pharma Center & Worldwide Flight Services GDP',
     tarmacExposureRiskMins: 35,
     recommendation: 'Standard transit protocol; pre-conditioned reefer trucks on standby for intermodal transfer.'

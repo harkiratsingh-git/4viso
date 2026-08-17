@@ -43,7 +43,7 @@ import { AutomatedReportingModal } from './components/AutomatedReportingModal';
 import { SupabaseSyncModal } from './components/SupabaseSyncModal';
 import { SettingsPage } from './components/SettingsPage';
 import { LoginPage } from './components/LoginPage';
-import { getActiveUser, setActiveUser as persistActiveUser, DEFAULT_SUPABASE_USER, fetchAllFromSupabase, restoreSupabaseSession, signOutFromSupabase, fetchDashboardSummary, DashboardSummary, getSupabaseClient, searchLanesRemote, insertAuditLogEntry, syncLaneRiskToSupabase, fetchCorridorAdvisories } from './services/supabaseService';
+import { getActiveUser, setActiveUser as persistActiveUser, DEFAULT_SUPABASE_USER, fetchAllFromSupabase, restoreSupabaseSession, signOutFromSupabase, fetchDashboardSummary, DashboardSummary, getSupabaseClient, searchLanesRemote, insertAuditLogEntry, syncLaneRiskToSupabase, fetchCorridorAdvisories, fetchCapaRecords, CapaRecord, fetchGdpComplianceSnapshots, GdpComplianceSnapshot } from './services/supabaseService';
 import { mapRowToTemperatureReading, mapRowToAlert } from './services/supabaseMappers';
 import {
   ShieldCheck,
@@ -79,6 +79,8 @@ export default function App() {
   const [alerts, setAlerts] = useState<AlertNotification[]>(INITIAL_ALERTS);
   const [disruptions, setDisruptions] = useState(INITIAL_WEATHER_DISRUPTIONS);
   const [corridorAdvisories, setCorridorAdvisories] = useState<CorridorAdvisory[]>([]);
+  const [capaRecords, setCapaRecords] = useState<CapaRecord[]>([]);
+  const [gdpSnapshots, setGdpSnapshots] = useState<GdpComplianceSnapshot[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>(INITIAL_AUDIT_LOGS);
 
   // User & Settings states
@@ -170,6 +172,8 @@ export default function App() {
           refreshDashboardSummary();
           reconcileLaneRiskWithSupabase(result.lanes);
           fetchCorridorAdvisories().then((a) => a && setCorridorAdvisories(a));
+          fetchCapaRecords().then((c) => c && setCapaRecords(c));
+          fetchGdpComplianceSnapshots().then((s) => s && setGdpSnapshots(s));
         } else {
           setDataSource('local');
         }
@@ -833,7 +837,11 @@ export default function App() {
         {/* TAB 3: GDP Compliance & Audit Trends */}
         {activeTab === 'COMPLIANCE' && (
           <div>
-            <GdpComplianceTrend onOpenAuditReport={() => setIsReportsModalOpen(true)} />
+            <GdpComplianceTrend
+              onOpenAuditReport={() => setIsReportsModalOpen(true)}
+              snapshots={dataSource === 'cloud' ? gdpSnapshots : null}
+              capaRecords={dataSource === 'cloud' ? capaRecords : []}
+            />
             <AuditTrailView logs={auditLogs} />
           </div>
         )}
@@ -943,6 +951,7 @@ export default function App() {
           lanes={lanes}
           alerts={alerts}
           logs={auditLogs}
+          capaRecords={dataSource === 'cloud' ? capaRecords : []}
           activeRole={activeRole}
           onClose={() => setIsReportsModalOpen(false)}
         />

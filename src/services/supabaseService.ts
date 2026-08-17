@@ -219,21 +219,45 @@ alter table public.temperature_telemetry enable row level security;
 alter table public.alert_notifications enable row level security;
 alter table public.audit_trail enable row level security;
 
--- Create Open Read/Write Policies for authenticated and anon users
+-- Scoped read/write policies for authenticated users only. Earlier versions of this script
+-- used "for all using (true) with check (true)" policies open to anon+authenticated, which
+-- gave unauthenticated read/write access to the entire dataset despite RLS being "enabled" —
+-- that was found live on this project and fixed; this script now matches the fixed baseline
+-- so re-running it (e.g. on a fresh project) can't reintroduce the same hole.
 drop policy if exists "Allow all operations for authenticated and anon users" on public.transport_lanes;
-create policy "Allow all operations for authenticated and anon users" on public.transport_lanes for all using (true) with check (true);
+drop policy if exists "Read all lanes" on public.transport_lanes;
+create policy "Read all lanes" on public.transport_lanes for select to authenticated using (true);
+drop policy if exists "Create lanes" on public.transport_lanes;
+create policy "Create lanes" on public.transport_lanes for insert to authenticated with check (true);
+drop policy if exists "Update lanes" on public.transport_lanes;
+create policy "Update lanes" on public.transport_lanes for update to authenticated using (true);
 
 drop policy if exists "Allow all operations for telemetry" on public.temperature_telemetry;
-create policy "Allow all operations for telemetry" on public.temperature_telemetry for all using (true) with check (true);
+drop policy if exists "Read all telemetry" on public.temperature_telemetry;
+create policy "Read all telemetry" on public.temperature_telemetry for select to authenticated using (true);
 
 drop policy if exists "Allow all operations for alerts" on public.alert_notifications;
-create policy "Allow all operations for alerts" on public.alert_notifications for all using (true) with check (true);
+drop policy if exists "Read all alerts" on public.alert_notifications;
+create policy "Read all alerts" on public.alert_notifications for select to authenticated using (true);
+drop policy if exists "Create alerts" on public.alert_notifications;
+create policy "Create alerts" on public.alert_notifications for insert to authenticated with check (true);
+drop policy if exists "Acknowledge alerts" on public.alert_notifications;
+create policy "Acknowledge alerts" on public.alert_notifications for update to authenticated
+  using (exists (select 1 from public.user_profiles where user_profiles.id = auth.uid() and user_profiles.role in ('Quality Lead', 'GDP Auditor')));
 
 drop policy if exists "Allow all operations for audit" on public.audit_trail;
-create policy "Allow all operations for audit" on public.audit_trail for all using (true) with check (true);
+drop policy if exists "Read audit trail" on public.audit_trail;
+create policy "Read audit trail" on public.audit_trail for select to authenticated using (true);
+drop policy if exists "Append audit trail" on public.audit_trail;
+create policy "Append audit trail" on public.audit_trail for insert to authenticated with check (true);
 
 drop policy if exists "Allow all operations for profiles" on public.user_profiles;
-create policy "Allow all operations for profiles" on public.user_profiles for all using (true) with check (true);
+drop policy if exists "Read all profiles" on public.user_profiles;
+create policy "Read all profiles" on public.user_profiles for select to authenticated using (true);
+drop policy if exists "Create own profile" on public.user_profiles;
+create policy "Create own profile" on public.user_profiles for insert to authenticated with check (auth.uid() = id);
+drop policy if exists "Update own profile" on public.user_profiles;
+create policy "Update own profile" on public.user_profiles for update to authenticated using (auth.uid() = id);
 
 -- ==========================================================
 -- 7. SEED REAL PHARMACEUTICAL COLD-CHAIN DATA
@@ -384,9 +408,19 @@ on conflict (code) do nothing;
 -- 9. Corrected dashboard_summary — active_excursions/high_risk_lanes must derive from
 --    current_temp vs temp_min/temp_max directly, not from the lane's stored status text,
 --    or a lane can excurse without the dashboard ever reflecting it.
+--    NOTE: the live project's actual dashboard_summary view now computes active_excursions
+--    from alert_notifications.alert_type = 'TEMPERATURE_EXCURSION' instead (that table is
+--    the real source of truth once an excursion has been triaged into an alert), so this
+--    script's version and the live view have diverged — this is the fallback definition for
+--    a fresh project, not a mirror of production. security_invoker is required: a plain
+--    (definer-mode) view here would bypass every RLS policy above, which is exactly the bug
+--    that was found and fixed live (anon could read full dashboard_summary contents through
+--    the view even with correct RLS on transport_lanes/alert_notifications).
 -- ==========================================================
 
-create or replace view public.dashboard_summary as
+create or replace view public.dashboard_summary
+with (security_invoker = true)
+as
 select
   count(*)::int as total_lanes,
   count(*) filter (where status in ('In Transit', 'Active'))::int as active_lanes,
@@ -761,10 +795,9 @@ export interface DashboardSummary {
 
 /**
  * Reads the real `dashboard_summary` view so every stat card shares one source of truth.
- * Note: as of this writing the view's own active_excursions/high_risk_lanes columns are
- * still keyed off the lanes' stored status rather than comparing current_temp against
- * temp_min/temp_max directly, so they can under-report live excursions the same way the
- * client-side fields used to — see the corrected view SQL in SUPABASE_SQL_MIGRATION.
+ * active_excursions is keyed off alert_notifications.alert_type = 'TEMPERATURE_EXCURSION'
+ * (see the view SQL in SUPABASE_SQL_MIGRATION) rather than comparing current_temp against
+ * temp_min/temp_max directly.
  */
 export async function fetchDashboardSummary(): Promise<DashboardSummary | null> {
   const client = getSupabaseClient();
@@ -854,6 +887,81 @@ export async function fetchCorridorAdvisories(): Promise<CorridorAdvisory[] | nu
     return null;
   }
   return data.map(mapRowToCorridorAdvisory);
+}
+
+export interface CapaRecord {
+  id: string;
+  capaNumber: string;
+  alertId: string;
+  laneCode: string;
+  title: string;
+  description: string;
+  rootCause: string;
+  correctiveAction: string;
+  preventiveAction: string;
+  owner: string;
+  status: string;
+  priority: string;
+  dueDate: string | null;
+  closedDate: string | null;
+  createdAt: string;
+}
+
+function mapRowToCapaRecord(row: any): CapaRecord {
+  return {
+    id: String(row.id),
+    capaNumber: String(row.capa_number),
+    alertId: String(row.alert_id),
+    laneCode: String(row.lane_code),
+    title: String(row.title),
+    description: String(row.description),
+    rootCause: String(row.root_cause),
+    correctiveAction: String(row.corrective_action),
+    preventiveAction: String(row.preventive_action),
+    owner: String(row.owner),
+    status: String(row.status),
+    priority: String(row.priority),
+    dueDate: row.due_date ?? null,
+    closedDate: row.closed_date ?? null,
+    createdAt: String(row.created_at),
+  };
+}
+
+export interface GdpComplianceSnapshot {
+  snapshotDate: string;
+  avgGdpCompliance: number;
+  totalLanes: number;
+  highRiskLanes: number;
+}
+
+export async function fetchGdpComplianceSnapshots(): Promise<GdpComplianceSnapshot[] | null> {
+  const client = getSupabaseClient();
+  if (!client) return null;
+  const { data, error } = await client
+    .from('gdp_compliance_snapshots')
+    .select('*')
+    .order('snapshot_date', { ascending: true });
+  if (error || !data) {
+    console.warn('gdp_compliance_snapshots fetch notice:', error?.message);
+    return null;
+  }
+  return data.map((row: any) => ({
+    snapshotDate: String(row.snapshot_date),
+    avgGdpCompliance: Number(row.avg_gdp_compliance) || 0,
+    totalLanes: Number(row.total_lanes) || 0,
+    highRiskLanes: Number(row.high_risk_lanes) || 0,
+  }));
+}
+
+export async function fetchCapaRecords(): Promise<CapaRecord[] | null> {
+  const client = getSupabaseClient();
+  if (!client) return null;
+  const { data, error } = await client.from('capa_records').select('*').order('created_at', { ascending: false });
+  if (error || !data) {
+    console.warn('capa_records fetch notice:', error?.message);
+    return null;
+  }
+  return data.map(mapRowToCapaRecord);
 }
 
 export async function fetchCarriers(): Promise<Carrier[] | null> {

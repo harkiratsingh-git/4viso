@@ -3,7 +3,7 @@ import { TransportLane, WeatherDisruption, AuditLogEntry, AlertNotification } fr
 export const INITIAL_LANES: TransportLane[] = [
   {
     id: 'lane-1',
-    laneCode: 'BRU-SIN-01',
+    laneCode: 'DEMO-BRU-SIN-01',
     originCity: 'Brussels',
     originIata: 'BRU',
     originCountry: 'Belgium',
@@ -91,7 +91,7 @@ export const INITIAL_LANES: TransportLane[] = [
   },
   {
     id: 'lane-2',
-    laneCode: 'FRA-JFK-04',
+    laneCode: 'DEMO-FRA-JFK-04',
     originCity: 'Frankfurt',
     originIata: 'FRA',
     originCountry: 'Germany',
@@ -168,7 +168,7 @@ export const INITIAL_LANES: TransportLane[] = [
   },
   {
     id: 'lane-3',
-    laneCode: 'RTM-SHA-02',
+    laneCode: 'DEMO-RTM-SHA-02',
     originCity: 'Rotterdam',
     originIata: 'RTM',
     originCountry: 'Netherlands',
@@ -268,7 +268,7 @@ export const INITIAL_LANES: TransportLane[] = [
   },
   {
     id: 'lane-4',
-    laneCode: 'BOM-DXB-08',
+    laneCode: 'DEMO-BOM-DXB-08',
     originCity: 'Mumbai',
     originIata: 'BOM',
     originCountry: 'India',
@@ -333,7 +333,7 @@ export const INITIAL_LANES: TransportLane[] = [
   },
   {
     id: 'lane-5',
-    laneCode: 'BSL-BOS-03',
+    laneCode: 'DEMO-BSL-BOS-03',
     originCity: 'Basel',
     originIata: 'BSL',
     originCountry: 'Switzerland',
@@ -409,7 +409,7 @@ export const INITIAL_LANES: TransportLane[] = [
   },
   {
     id: 'lane-6',
-    laneCode: 'TYO-FRA-06',
+    laneCode: 'DEMO-TYO-FRA-06',
     originCity: 'Tokyo',
     originIata: 'NRT',
     originCountry: 'Japan',
@@ -486,7 +486,7 @@ export const INITIAL_LANES: TransportLane[] = [
   },
   {
     id: 'lane-7',
-    laneCode: 'DUB-ORD-09',
+    laneCode: 'DEMO-DUB-ORD-09',
     originCity: 'Dublin',
     originIata: 'DUB',
     originCountry: 'Ireland',
@@ -562,7 +562,7 @@ export const INITIAL_LANES: TransportLane[] = [
   },
   {
     id: 'lane-8',
-    laneCode: 'AMS-HKG-05',
+    laneCode: 'DEMO-AMS-HKG-05',
     originCity: 'Amsterdam',
     originIata: 'AMS',
     originCountry: 'Netherlands',
@@ -658,7 +658,7 @@ export const INITIAL_WEATHER_DISRUPTIONS: WeatherDisruption[] = [
     severity: 'Critical',
     impactDescription: 'Severe oceanic storm system causing flight route deviations and transatlantic cargo delay.',
     delayEstimated: '+3 to 5 hrs',
-    affectedLaneCodes: ['FRA-JFK-04', 'DUB-ORD-09'],
+    affectedLaneCodes: ['DEMO-FRA-JFK-04', 'DEMO-DUB-ORD-09'],
     lastUpdated: '10 mins ago'
   },
   {
@@ -668,7 +668,7 @@ export const INITIAL_WEATHER_DISRUPTIONS: WeatherDisruption[] = [
     severity: 'Critical',
     impactDescription: 'Port congestion causing 48h vessel dwell time on inbound pharmaceutical container vessels.',
     delayEstimated: '+48 hrs',
-    affectedLaneCodes: ['RTM-SHA-02'],
+    affectedLaneCodes: ['DEMO-RTM-SHA-02'],
     lastUpdated: '25 mins ago'
   },
   {
@@ -678,7 +678,7 @@ export const INITIAL_WEATHER_DISRUPTIONS: WeatherDisruption[] = [
     severity: 'Warning',
     impactDescription: 'Ground tarmac temperature exceeding 44°C; elevated risk of thermal excursion during ramp transfers.',
     delayEstimated: 'On Track (Thermal Alert)',
-    affectedLaneCodes: ['BOM-DXB-08'],
+    affectedLaneCodes: ['DEMO-BOM-DXB-08'],
     lastUpdated: '1 hour ago'
   },
   {
@@ -688,7 +688,7 @@ export const INITIAL_WEATHER_DISRUPTIONS: WeatherDisruption[] = [
     severity: 'Warning',
     impactDescription: 'Dense fog advisory affecting barge feeder and feeder vessel departures.',
     delayEstimated: '+6 to 10 hrs',
-    affectedLaneCodes: ['RTM-SHA-02'],
+    affectedLaneCodes: ['DEMO-RTM-SHA-02'],
     lastUpdated: '2 hours ago'
   }
 ];
@@ -699,7 +699,7 @@ export const INITIAL_AUDIT_LOGS: AuditLogEntry[] = [
     timestamp: '2026-08-15 15:28:14 UTC',
     actor: 'Dr. Elena Vance',
     role: 'Quality Assurance Lead',
-    laneCode: 'RTM-SHA-02',
+    laneCode: 'DEMO-RTM-SHA-02',
     action: 'CAPA Investigation Initiated (CAPA-2026-088)',
     category: 'CAPA_LOGGED',
     details: 'Triggered formal excursion investigation due to Reefer #RF-449 power failure. Core temp at 11.3°C.',
@@ -711,7 +711,7 @@ export const INITIAL_AUDIT_LOGS: AuditLogEntry[] = [
     timestamp: '2026-08-15 15:15:02 UTC',
     actor: 'IoT Telemetry Sentinel',
     role: 'Automated System',
-    laneCode: 'AMS-HKG-05',
+    laneCode: 'DEMO-AMS-HKG-05',
     action: 'Temperature Excursion Alert Triggered',
     category: 'TEMPERATURE_MONITORING',
     details: 'Sensor probe T-09 recorded -12.4°C against -15.0°C deep-freeze threshold for 30 consecutive minutes.',
@@ -723,7 +723,7 @@ export const INITIAL_AUDIT_LOGS: AuditLogEntry[] = [
     timestamp: '2026-08-15 14:45:30 UTC',
     actor: 'Marcus Sterling',
     role: 'Logistics Operations Lead',
-    laneCode: 'FRA-JFK-04',
+    laneCode: 'DEMO-FRA-JFK-04',
     action: 'Route Weather Deviation Acknowledged',
     category: 'ALERT_ACKNOWLEDGED',
     details: 'Acknowledged transatlantic flight re-routing LH8220 (+3.5h delay). Thermal budget checked valid.',
@@ -735,7 +735,7 @@ export const INITIAL_AUDIT_LOGS: AuditLogEntry[] = [
     timestamp: '2026-08-15 14:10:00 UTC',
     actor: 'Sophie Durand',
     role: 'GDP Compliance Auditor',
-    laneCode: 'BSL-BOS-03',
+    laneCode: 'DEMO-BSL-BOS-03',
     action: 'Cryogenic Shipper GDP Certificate Validated',
     category: 'GDP_AUDIT',
     details: 'Verified liquid nitrogen dry vapor chamber calibration certificate. MKT validated at -78.8°C.',
@@ -747,7 +747,7 @@ export const INITIAL_AUDIT_LOGS: AuditLogEntry[] = [
     timestamp: '2026-08-15 13:00:22 UTC',
     actor: 'David Chen',
     role: 'Transport Planner',
-    laneCode: 'BRU-SIN-01',
+    laneCode: 'DEMO-BRU-SIN-01',
     action: 'New Transport Lane Provisioned',
     category: 'LANE_CONFIGURATION',
     details: 'Created lane BRU-SIN-01 with DHL Express charter. Threshold alerts set: 2-8°C, max 15m excursion.',
@@ -760,7 +760,7 @@ export const INITIAL_ALERTS: AlertNotification[] = [
   {
     id: 'alt-01',
     laneId: 'lane-3',
-    laneCode: 'RTM-SHA-02',
+    laneCode: 'DEMO-RTM-SHA-02',
     route: 'Rotterdam → Shanghai',
     timestamp: '2026-08-15 15:20:00 UTC',
     type: 'TEMPERATURE_EXCURSION',
@@ -776,7 +776,7 @@ export const INITIAL_ALERTS: AlertNotification[] = [
   {
     id: 'alt-02',
     laneId: 'lane-8',
-    laneCode: 'AMS-HKG-05',
+    laneCode: 'DEMO-AMS-HKG-05',
     route: 'Amsterdam → Hong Kong',
     timestamp: '2026-08-15 15:15:00 UTC',
     type: 'CUSTOMS_HOLD',
@@ -792,7 +792,7 @@ export const INITIAL_ALERTS: AlertNotification[] = [
   {
     id: 'alt-03',
     laneId: 'lane-6',
-    laneCode: 'TYO-FRA-06',
+    laneCode: 'DEMO-TYO-FRA-06',
     route: 'Tokyo → Frankfurt',
     timestamp: '2026-08-15 15:00:00 UTC',
     type: 'TEMPERATURE_EXCURSION',
@@ -807,7 +807,7 @@ export const INITIAL_ALERTS: AlertNotification[] = [
   {
     id: 'alt-04',
     laneId: 'lane-2',
-    laneCode: 'FRA-JFK-04',
+    laneCode: 'DEMO-FRA-JFK-04',
     route: 'Frankfurt → New York',
     timestamp: '2026-08-15 14:30:00 UTC',
     type: 'TRANSIT_DELAY',

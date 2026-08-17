@@ -15,12 +15,14 @@ import {
   FileSpreadsheet
 } from 'lucide-react';
 import { TransportLane, AlertNotification, AuditLogEntry, UserRole } from '../types';
+import { CapaRecord } from '../services/supabaseService';
 import { formatCurrency } from '../utils/formatters';
 
 interface AutomatedReportingModalProps {
   lanes: TransportLane[];
   alerts: AlertNotification[];
   logs: AuditLogEntry[];
+  capaRecords: CapaRecord[];
   activeRole: UserRole;
   onClose: () => void;
 }
@@ -31,6 +33,7 @@ export const AutomatedReportingModal: React.FC<AutomatedReportingModalProps> = (
   lanes,
   alerts,
   logs,
+  capaRecords,
   activeRole,
   onClose,
 }) => {
@@ -46,6 +49,11 @@ export const AutomatedReportingModal: React.FC<AutomatedReportingModalProps> = (
 
   const totalValue = targetLanes.reduce((acc, l) => acc + l.payloadValueUsd, 0);
   const avgCompliance = (targetLanes.reduce((acc, l) => acc + l.gdpComplianceRate, 0) / (targetLanes.length || 1)).toFixed(1);
+
+  const targetLaneCodes = new Set(targetLanes.map(l => l.laneCode));
+  const scopedCapaRecords = selectedLaneId === 'ALL'
+    ? capaRecords
+    : capaRecords.filter(c => targetLaneCodes.has(c.laneCode));
 
   const handlePrint = () => {
     window.print();
@@ -322,12 +330,22 @@ export const AutomatedReportingModal: React.FC<AutomatedReportingModalProps> = (
                     <AlertTriangle className="w-3.5 h-3.5" />
                     <span>Active Excursion & CAPA Root Cause Analysis</span>
                   </div>
-                  <div className="p-3 bg-rose-950/20 border border-rose-800/40 rounded-lg text-[11px] space-y-1.5">
-                    <div><strong>Incident ID:</strong> CAPA-2026-088 (Lane RTM-SHA-02)</div>
-                    <div><strong>Deviation:</strong> Core temperature reached 11.3°C against 8.0°C upper limit.</div>
-                    <div><strong>Root Cause:</strong> Auxiliary generator electrical fault aboard container vessel.</div>
-                    <div><strong>Immediate Action:</strong> Reefer transferred to vessel main backup bus; thermal stabilizer deployed.</div>
-                  </div>
+                  {scopedCapaRecords.length === 0 ? (
+                    <div className="p-3 bg-slate-950/60 border border-slate-800 rounded-lg text-[11px] text-slate-400">
+                      No CAPA records on file for this scope.
+                    </div>
+                  ) : (
+                    scopedCapaRecords.map(c => (
+                      <div key={c.id} className="p-3 bg-rose-950/20 border border-rose-800/40 rounded-lg text-[11px] space-y-1.5">
+                        <div><strong>Incident ID:</strong> {c.capaNumber} (Lane {c.laneCode}) — <span className="text-slate-400">{c.status}</span></div>
+                        <div><strong>Issue:</strong> {c.description}</div>
+                        <div><strong>Root Cause:</strong> {c.rootCause}</div>
+                        <div><strong>Corrective Action:</strong> {c.correctiveAction}</div>
+                        <div><strong>Preventive Action:</strong> {c.preventiveAction}</div>
+                        <div><strong>Owner:</strong> {c.owner} · <strong>Priority:</strong> {c.priority}</div>
+                      </div>
+                    ))
+                  )}
                 </div>
               )}
 
