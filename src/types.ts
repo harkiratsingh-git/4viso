@@ -55,6 +55,67 @@ export interface CarrierPerformanceSummary {
   claimRatePct: number;
 }
 
+export interface LaneLeg {
+  id: string;
+  laneId: string;
+  legSequence: number;
+  originPortCode: string;
+  destinationPortCode: string;
+  mode: 'Air' | 'Sea' | 'Road' | 'Rail';
+  carrierId: string | null;
+  isRecommendedCarrier: boolean;
+  stopType: 'Transit Hub' | 'Customs Clearance' | 'Cold Storage Layover' | 'Carrier Handover' | 'Origin' | 'Destination' | null;
+  hoursOnGround: number;
+  distanceKm: number | null;
+  estTransitHours: number | null;
+  customsDelayHours: number | null;
+  legRiskScore: number | null;
+}
+
+/** From the lane_carrier_summary view — the single-badge-vs-per-leg-breakdown decision point. */
+export interface LaneCarrierSummary {
+  laneId: string;
+  legCount: number;
+  distinctCarrierCount: number;
+  distinctModeCount: number;
+  unifiedCarrierId: string | null;
+  unifiedMode: string | null;
+}
+
+export interface LaneRouteOption {
+  id: string;
+  laneId: string | null;
+  optionType: 'user_edited' | 'recommended' | 'recommended_from_edit';
+  legsSnapshot: unknown;
+  totalDistanceKm: number | null;
+  totalTransitHours: number | null;
+  totalCustomsDelayHours: number | null;
+  totalRiskScore: number | null;
+  wasChosen: boolean;
+}
+
+/** From carrier_certification_status — SECURITY INVOKER-safe view combining a carrier with
+ * whichever of its uploaded certifications currently satisfies it, if any. */
+export interface CarrierCertificationStatus {
+  carrierId: string;
+  name: string;
+  requiresCertificationUpload: boolean;
+  certificationStatus: 'Not Required' | 'Verified' | 'Pending Review' | 'Missing';
+}
+
+export interface CarrierCertification {
+  id: string;
+  carrierId: string;
+  documentType: 'GDP Certificate' | 'CEIV Pharma' | 'ISO 9001' | 'WHO Prequalification' | 'Cold Chain Accreditation' | 'Other';
+  storagePath: string;
+  originalFilename: string;
+  uploadedBy: string | null;
+  uploadedByName: string | null;
+  uploadedAt: string;
+  status: 'Pending Review' | 'Verified' | 'Rejected' | 'Expired';
+  expiryDate: string | null;
+}
+
 export interface RouteStop {
   id: string;
   sequence: number; // 1-based order between origin and destination

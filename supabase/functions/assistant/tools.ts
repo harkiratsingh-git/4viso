@@ -7,7 +7,7 @@ import {
   findPort,
   recommendTransportMode,
   recommendStops,
-  recommendCarrier,
+  recommendCarrierWithRegionalRules,
   findRelevantAdvisories,
   requiresAcknowledgment,
   isAdvisoryStale,
@@ -268,7 +268,7 @@ async function toolRecommendCarrier(client: SupabaseClient, input: any) {
   const carriers = await loadCarriers(client);
   const performanceByCarrierId = await loadPerformanceByCarrierId(client);
   const sensitive = isTempRangeSensitive(input.temp_range_type);
-  const ranked = recommendCarrier(carriers, input.mode, sensitive, origin!.country, destination!.country, 4, performanceByCarrierId);
+  const ranked = recommendCarrierWithRegionalRules(carriers, input.mode, sensitive, origin!, destination!, 4, performanceByCarrierId);
 
   if (ranked.length === 0) return { error: `No carriers found offering ${input.mode} on this route.` };
 

@@ -2,7 +2,7 @@
 // computed suggested alternative) in the lane wizard — real great-circle distance/transit-time
 // estimate, summed customs delay from the ports directory, and per-stop certification status.
 import { TransportMode } from '../types';
-import { PortEntry } from './ports';
+import { PortEntry, recommendStops } from './ports';
 import { haversineKm } from './geoMath';
 
 export interface RouteOptionStop {
@@ -63,6 +63,43 @@ export function computeRouteMetrics(
     totalCustomsDelayHours,
     stopDetails,
   };
+}
+
+export interface FixedWaypoint {
+  iata: string;
+  city: string;
+  country: string;
+  coords: [number, number];
+}
+
+/**
+ * "Recommended-from-your-edit" (Phase 2, option 3): the user's own stops stay fixed points —
+ * this only looks for a genuinely missing stop *inside* a gap between two of those fixed
+ * points (reusing the same range-cap logic recommendStops already applies per mode), never
+ * removes or reorders anything the user placed. Returns the full waypoint list including the
+ * user's own fixed points, with any inserted stops spliced in at the right position.
+ */
+export function insertRecommendedGapStops(
+  fixedWaypoints: FixedWaypoint[],
+  tempMin: number,
+  tempMax: number,
+  ports: PortEntry[],
+  mode: TransportMode
+): FixedWaypoint[] {
+  if (fixedWaypoints.length < 2) return fixedWaypoints;
+
+  const result: FixedWaypoint[] = [fixedWaypoints[0]];
+  for (let i = 0; i < fixedWaypoints.length - 1; i++) {
+    const from = fixedWaypoints[i];
+    const to = fixedWaypoints[i + 1];
+    const candidates = recommendStops(from.coords, to.coords, from.iata, to.iata, tempMin, tempMax, ports, mode, 1);
+    if (candidates.length > 0) {
+      const c = candidates[0].port;
+      result.push({ iata: c.code, city: c.city, country: c.country, coords: c.coords });
+    }
+    result.push(to);
+  }
+  return result;
 }
 
 /** True if two stop lists represent a materially different route (order-insensitive). */

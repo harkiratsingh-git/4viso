@@ -24,6 +24,7 @@ import {
 import { TransportLane, RiskFactor, RiskLevel } from '../types';
 import { getRiskColor, getStatusColor, formatCurrency } from '../utils/formatters';
 import { isLaneExcursing, getEffectiveRiskLevel, getEffectiveRiskScore } from '../utils/laneRisk';
+import { LaneCarrierAssignmentPanel } from './LaneCarrierAssignmentPanel';
 
 interface LaneRiskAssessmentModalProps {
   lane: TransportLane;
@@ -317,6 +318,8 @@ export const LaneRiskAssessmentModal: React.FC<LaneRiskAssessmentModalProps> = (
                 </div>
               </div>
             </div>
+
+          <LaneCarrierAssignmentPanel lane={lane} />
 
           {/* Section: Composite Risk Category Matrix */}
           <div>

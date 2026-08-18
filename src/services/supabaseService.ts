@@ -1,5 +1,5 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { TransportLane, AlertNotification, AuditLogEntry, SupabaseSettings, SupabaseUser, CloudSyncState, RiskLevel, CorridorAdvisory, Carrier, CarrierPerformanceSummary } from '../types';
+import { TransportLane, AlertNotification, AuditLogEntry, SupabaseSettings, SupabaseUser, CloudSyncState, RiskLevel, CorridorAdvisory, Carrier, CarrierPerformanceSummary, LaneLeg, LaneCarrierSummary, LaneRouteOption, CarrierCertificationStatus, CarrierCertification } from '../types';
 import {
   mapRowToLane,
   mapLaneToRow,
@@ -11,6 +11,13 @@ import {
   mapRowToCorridorAdvisory,
   mapRowToCarrier,
   mapRowToCarrierPerformanceSummary,
+  mapRowToLaneLeg,
+  mapLaneLegToRow,
+  mapRowToLaneCarrierSummary,
+  mapRowToLaneRouteOption,
+  mapLaneRouteOptionToRow,
+  mapRowToCarrierCertificationStatus,
+  mapRowToCarrierCertification,
 } from './supabaseMappers';
 import { PortEntry, mapPortsRowToEntry } from '../utils/ports';
 
@@ -988,6 +995,155 @@ export async function fetchCarrierPerformanceSummary(): Promise<CarrierPerforman
     return null;
   }
   return data.map(mapRowToCarrierPerformanceSummary);
+}
+
+// ---------------------------------------------------------------------------
+// Lane legs, route options, and carrier certifications (per-leg recommendation system)
+// ---------------------------------------------------------------------------
+
+export async function fetchLaneLegs(laneId: string): Promise<LaneLeg[] | null> {
+  const client = getSupabaseClient();
+  if (!client) return null;
+  const { data, error } = await client.from('lane_legs').select('*').eq('lane_id', laneId).order('leg_sequence', { ascending: true });
+  if (error || !data) {
+    console.warn('lane_legs fetch notice:', error?.message);
+    return null;
+  }
+  return data.map(mapRowToLaneLeg);
+}
+
+/** Replaces every leg for a lane in one go (delete + reinsert) — simpler and safer than a
+ * diff/upsert here since a route edit routinely changes the leg count itself (adding/removing
+ * a stop shifts every later leg_sequence), so there's rarely a stable identity to upsert against. */
+export async function replaceLaneLegs(laneId: string, legs: Omit<LaneLeg, 'id' | 'laneId'>[]): Promise<boolean> {
+  const client = getSupabaseClient();
+  if (!client) return false;
+  const { error: deleteError } = await client.from('lane_legs').delete().eq('lane_id', laneId);
+  if (deleteError) {
+    console.warn('lane_legs delete notice:', deleteError.message);
+    return false;
+  }
+  if (legs.length === 0) return true;
+  const rows = legs.map((leg) => mapLaneLegToRow({ ...leg, laneId }));
+  const { error: insertError } = await client.from('lane_legs').insert(rows);
+  if (insertError) {
+    console.warn('lane_legs insert notice:', insertError.message);
+    return false;
+  }
+  return true;
+}
+
+/** From lane_carrier_summary — distinct_carrier_count === 1 && distinct_mode_count === 1 means
+ * the UI should collapse to one unified badge instead of a per-leg breakdown. */
+export async function fetchLaneCarrierSummary(laneId: string): Promise<LaneCarrierSummary | null> {
+  const client = getSupabaseClient();
+  if (!client) return null;
+  const { data, error } = await client.from('lane_carrier_summary').select('*').eq('lane_id', laneId).maybeSingle();
+  if (error || !data) {
+    console.warn('lane_carrier_summary fetch notice:', error?.message);
+    return null;
+  }
+  return mapRowToLaneCarrierSummary(data);
+}
+
+/** lane_route_options is insert-only by design (no UPDATE policy) — a real, immutable audit
+ * trail of what was recommended vs. what was actually chosen, for GDP compliance review. */
+export async function insertLaneRouteOption(
+  option: Omit<LaneRouteOption, 'id' | 'laneId'>,
+  laneId: string | null,
+  createdBy: string | null
+): Promise<boolean> {
+  const client = getSupabaseClient();
+  if (!client) return false;
+  const { error } = await client.from('lane_route_options').insert(mapLaneRouteOptionToRow(option, laneId, createdBy));
+  if (error) {
+    console.warn('lane_route_options insert notice:', error.message);
+    return false;
+  }
+  return true;
+}
+
+export async function fetchLaneRouteOptions(laneId: string): Promise<LaneRouteOption[] | null> {
+  const client = getSupabaseClient();
+  if (!client) return null;
+  const { data, error } = await client.from('lane_route_options').select('*').eq('lane_id', laneId).order('created_at', { ascending: false });
+  if (error || !data) {
+    console.warn('lane_route_options fetch notice:', error?.message);
+    return null;
+  }
+  return data.map(mapRowToLaneRouteOption);
+}
+
+/** carrier_certification_status is already readable by any authenticated user (no new RLS
+ * needed) — this is what the per-leg carrier picker checks before allowing a carrier to be used
+ * without an override, and what the auto-attach logic reads to find a Verified cert. */
+export async function fetchCarrierCertificationStatuses(): Promise<CarrierCertificationStatus[] | null> {
+  const client = getSupabaseClient();
+  if (!client) return null;
+  const { data, error } = await client.from('carrier_certification_status').select('*');
+  if (error || !data) {
+    console.warn('carrier_certification_status fetch notice:', error?.message);
+    return null;
+  }
+  return data.map(mapRowToCarrierCertificationStatus);
+}
+
+/** The Verified certification on file for a carrier, regardless of who uploaded it — this is
+ * exactly what gets auto-attached when that carrier is selected. Picks the most recently
+ * uploaded Verified row if more than one exists. */
+export async function fetchVerifiedCertificationForCarrier(carrierId: string): Promise<CarrierCertification | null> {
+  const client = getSupabaseClient();
+  if (!client) return null;
+  const { data, error } = await client
+    .from('carrier_certifications')
+    .select('*')
+    .eq('carrier_id', carrierId)
+    .eq('status', 'Verified')
+    .order('uploaded_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error || !data) {
+    if (error) console.warn('carrier_certifications fetch notice:', error.message);
+    return null;
+  }
+  let uploaderName: string | null = null;
+  if (data.uploaded_by) {
+    const { data: profile } = await client.from('user_profiles').select('full_name').eq('id', data.uploaded_by).maybeSingle();
+    uploaderName = profile?.full_name ?? null;
+  }
+  return mapRowToCarrierCertification(data, uploaderName);
+}
+
+/** Uploads a certification document to the private carrier-certifications storage bucket and
+ * records it as Pending Review — a Quality Lead/GDP Auditor must still verify it (see the
+ * "Review certifications" RLS policy) before it can be auto-attached anywhere. */
+export async function uploadCarrierCertification(
+  carrierId: string,
+  file: File,
+  documentType: CarrierCertification['documentType'],
+  uploadedBy: string
+): Promise<{ success: boolean; message: string }> {
+  const client = getSupabaseClient();
+  if (!client) return { success: false, message: 'Not connected to Supabase.' };
+
+  const storagePath = `${carrierId}/${Date.now()}-${file.name}`;
+  const { error: uploadError } = await client.storage.from('carrier-certifications').upload(storagePath, file);
+  if (uploadError) {
+    return { success: false, message: uploadError.message };
+  }
+
+  const { error: insertError } = await client.from('carrier_certifications').insert({
+    carrier_id: carrierId,
+    document_type: documentType,
+    storage_path: storagePath,
+    original_filename: file.name,
+    uploaded_by: uploadedBy,
+    status: 'Pending Review',
+  });
+  if (insertError) {
+    return { success: false, message: insertError.message };
+  }
+  return { success: true, message: 'Certification uploaded and pending review.' };
 }
 
 /**

@@ -382,6 +382,108 @@ export function recommendCarrier(
 }
 
 // ---------------------------------------------------------------------------
+// Real operating-region carrier rules (Blue Dart / SF Express / Aramex) — mirrors
+// src/utils/legRecommendation.ts's applyCarrierRegionalRules. Kept in sync manually since this
+// edge function can't import frontend modules; if you change one, change the other. These need
+// leg-level detail (IATA codes, mode, season, estimated transit time) that recommendCarrier's
+// country-only signature above doesn't carry, so — same as the frontend — this runs as a
+// second pass over its output rather than being folded into recommendCarrier itself.
+// ---------------------------------------------------------------------------
+
+const INDIAN_METRO_IATA = new Set(['BOM', 'DEL', 'BLR', 'MAA', 'HYD', 'CCU', 'AMD']);
+const RCEP_ASIA_COUNTRIES = new Set(['Vietnam', 'Thailand', 'Malaysia', 'Singapore', 'South Korea', 'Japan']);
+const GCC_MENA_COUNTRIES = new Set(['United Arab Emirates', 'Saudi Arabia', 'Qatar', 'Kuwait', 'Bahrain', 'Oman', 'Egypt']);
+const ROAD_SPEED_KMH = 70;
+
+const WEIGHT_BLUEDART_METRO_BONUS = 15;
+const WEIGHT_SFEXPRESS_RCEP_BONUS = 25;
+const WEIGHT_ARAMEX_OVERLAND_BONUS = 15;
+const WEIGHT_ARAMEX_NO_FLEET_AIR_PENALTY = 20;
+
+export function applyCarrierRegionalRules(
+  rec: ScoredCarrier,
+  origin: PortRow,
+  destination: PortRow,
+  mode: string,
+  tempRangeSensitive: boolean
+): ScoredCarrier | null {
+  const { carrier } = rec;
+  let score = rec.score;
+  const reasons = [...rec.reasons];
+
+  if (carrier.id === 'CARR-BLUEDART') {
+    const originIsIndia = origin.country === 'India';
+    const destIsIndia = destination.country === 'India';
+    if (originIsIndia !== destIsIndia) {
+      // Crosses India's border — Blue Dart has no independent international long-haul network;
+      // it hands off to DHL at the gateway, so it's not a real option for this leg at all.
+      return null;
+    }
+    if (originIsIndia && destIsIndia) {
+      const bothMetro = INDIAN_METRO_IATA.has(origin.code) && INDIAN_METRO_IATA.has(destination.code);
+      if (bothMetro) {
+        score += WEIGHT_BLUEDART_METRO_BONUS;
+        reasons.push("India-domestic metro-to-metro leg — inside Blue Dart's core network.");
+      } else if (tempRangeSensitive) {
+        reasons.push('Destination is outside Blue Dart\'s major-metro network — flag for passive-shipper/72h-holdover handling rather than standard linehaul if this is an active 2-8°C reefer requirement.');
+      }
+    }
+  }
+
+  if (carrier.id === 'CARR-SFEXPRESS') {
+    const originIsChina = origin.country === 'China';
+    const destIsChina = destination.country === 'China';
+    const isRcepCorridor = (originIsChina && RCEP_ASIA_COUNTRIES.has(destination.country)) || (destIsChina && RCEP_ASIA_COUNTRIES.has(origin.country));
+    if (isRcepCorridor) {
+      score += WEIGHT_SFEXPRESS_RCEP_BONUS;
+      reasons.push("Intra-Asia/RCEP corridor — within SF Express's regional network.");
+    }
+    if ((originIsChina || destIsChina) && tempRangeSensitive) {
+      reasons.push("Temperature-controlled China leg — prefer routing via SF Express's Ezhou (EHU) hub, its purpose-built cold-chain cargo facility.");
+    }
+  }
+
+  if (carrier.id === 'CARR-ARAMEX') {
+    const gccOverland = GCC_MENA_COUNTRIES.has(origin.country) && GCC_MENA_COUNTRIES.has(destination.country) && mode === 'Road';
+    if (gccOverland) {
+      score += WEIGHT_ARAMEX_OVERLAND_BONUS;
+      reasons.push("GCC/MENA overland cross-border leg — Aramex's core network.");
+      const estTransitHours = haversineKm(origin.coords, destination.coords) / ROAD_SPEED_KMH;
+      const month = new Date().getUTCMonth() + 1; // 1-12
+      if (month >= 5 && month <= 9 && estTransitHours > 36) {
+        reasons.push(`High-ambient-temperature warning: ~${Math.round(estTransitHours)}h overland transit during May-September — confirm active (not passive) cooling is selected.`);
+      }
+    }
+    if (mode === 'Air') {
+      score -= WEIGHT_ARAMEX_NO_FLEET_AIR_PENALTY;
+      reasons.push('Aramex owns no aircraft — this Air leg would be brokered capacity, not a dedicated network; weighted down relative to carriers with their own fleet.');
+    }
+  }
+
+  return { carrier, score: Math.round(score), reasons };
+}
+
+/** Same as recommendCarrier, but with the regional rules above applied before the final
+ * ranking/slice — call this instead of recommendCarrier directly wherever origin/destination
+ * PortRow objects (not just country names) are available. */
+export function recommendCarrierWithRegionalRules(
+  carriers: CarrierRow[],
+  mode: string,
+  tempRangeSensitive: boolean,
+  origin: PortRow,
+  destination: PortRow,
+  limit = 4,
+  performanceByCarrierId?: Map<string, PerformanceRow>
+): ScoredCarrier[] {
+  const baseScored = recommendCarrier(carriers, mode, tempRangeSensitive, origin.country, destination.country, carriers.length, performanceByCarrierId);
+  return baseScored
+    .map((rec) => applyCarrierRegionalRules(rec, origin, destination, mode, tempRangeSensitive))
+    .filter((rec): rec is ScoredCarrier => rec !== null)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit);
+}
+
+// ---------------------------------------------------------------------------
 // Port lookup by IATA code or city name — grounds every tool's origin/destination
 // resolution in the real ports table rather than trusting whatever string the model sends.
 // ---------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   X,
   Plane,
@@ -13,24 +13,34 @@ import {
   AlertTriangle,
   Sparkles,
   Trash2,
-  Route as RouteIcon,
-  BadgeCheck,
 } from 'lucide-react';
-import { TransportLane, TransportMode, TemperatureRangeType, RiskFactor, RouteStop, Carrier, CorridorAdvisory, AuditLogEntry, CarrierPerformanceSummary } from '../types';
+import { TransportLane, TransportMode, TemperatureRangeType, RiskFactor, RouteStop, Carrier, CorridorAdvisory, AuditLogEntry, CarrierPerformanceSummary, CarrierCertificationStatus } from '../types';
 import { getAirportCoords } from '../utils/geo';
 import { assessRoute } from '../utils/riskAssessment';
-import { recommendTransportMode, recommendStops } from '../utils/ports';
-import { computeRouteMetrics, stopSetsDiffer } from '../utils/routeComparison';
-import { alongTrackDistanceKm } from '../utils/geoMath';
+import { recommendTransportMode } from '../utils/ports';
+import { stopSetsDiffer } from '../utils/routeComparison';
 import { getRiskColor } from '../utils/formatters';
 import { formatUtcCompactNoSeconds } from '../utils/dateFormat';
-import { calculateLaneBaseRisk, LaneBaseRisk, fetchCarriers, fetchCorridorAdvisories, fetchCarrierPerformanceSummary } from '../services/supabaseService';
-import { recommendCarrier, explainTopPick } from '../utils/carrierRecommendation';
+import {
+  fetchCarriers,
+  fetchCorridorAdvisories,
+  fetchCarrierPerformanceSummary,
+  fetchCarrierCertificationStatuses,
+  replaceLaneLegs,
+  insertLaneRouteOption,
+  getActiveUser,
+} from '../services/supabaseService';
 import { findRelevantAdvisories, RelevantAdvisory, STALENESS_WARNING_PREFIX, requiresAcknowledgment } from '../utils/corridorAdvisories';
 import { AirportAutocomplete, AirportValue } from './AirportAutocomplete';
 import { RouteStopsEditor, DraftStop } from './RouteStopsEditor';
 import { usePorts } from '../contexts/PortsContext';
 import { OverrideAcknowledgmentModal, PendingOverride } from './OverrideAcknowledgmentModal';
+import { ThreeWayRouteComparison, ComputedRouteOption, RouteOptionType } from './ThreeWayRouteComparison';
+import { LegCarrierBreakdown } from './LegCarrierBreakdown';
+import { SimpleRouteRecommendation } from './SimpleRouteRecommendation';
+import { LegMode, legsAreUnified } from '../utils/legRecommendation';
+import { useViewMode } from '../contexts/ViewModeContext';
+import { ChevronDown, ChevronRight } from 'lucide-react';
 
 interface NewLaneWizardModalProps {
   onClose: () => void;
@@ -38,94 +48,6 @@ interface NewLaneWizardModalProps {
   onViewLane: (lane: TransportLane) => void;
   onLogAuditEntry: (laneCode: string, action: string, category: AuditLogEntry['category'], details: string) => void;
 }
-
-interface RouteOptionCardProps {
-  title: string;
-  originIata: string;
-  destinationIata: string;
-  stopDetails: { iata: string; city: string; ceivPharmaCertified: boolean; hasGdpCertification: boolean; avgCustomsDelayHours: number }[];
-  totalDistanceKm: number;
-  estTransitHours: number;
-  totalCustomsDelayHours: number;
-  blendedRiskScore: number;
-  corridorFlagCount: number;
-  accent: 'emerald' | 'teal';
-  selected: boolean;
-  action?: React.ReactNode;
-}
-
-const RouteOptionCard: React.FC<RouteOptionCardProps> = ({
-  title,
-  originIata,
-  destinationIata,
-  stopDetails,
-  totalDistanceKm,
-  estTransitHours,
-  totalCustomsDelayHours,
-  blendedRiskScore,
-  corridorFlagCount,
-  accent,
-  selected,
-  action,
-}) => {
-  const riskStyles = getRiskColor(blendedRiskScore >= 40 ? 'High' : blendedRiskScore >= 20 ? 'Medium' : 'Low');
-  const ring = accent === 'emerald' ? 'ring-emerald-500/50 border-emerald-600/60' : 'ring-teal-500/50 border-teal-600/60';
-
-  return (
-    <div className={`p-3.5 rounded-xl border bg-slate-950/70 space-y-2.5 ${selected ? `ring-1 ${ring}` : 'border-slate-800'}`}>
-      <div className="flex items-center justify-between">
-        <span className={`text-[11px] font-bold uppercase tracking-wider ${accent === 'emerald' ? 'text-emerald-400' : 'text-teal-400'}`}>{title}</span>
-        {selected && (
-          <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 flex items-center gap-1">
-            <Check className="w-2.5 h-2.5" /> Selected
-          </span>
-        )}
-      </div>
-
-      <div className="flex items-center flex-wrap gap-1 text-[11px] font-mono">
-        <span className="px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">{originIata}</span>
-        {stopDetails.map((s) => (
-          <React.Fragment key={s.iata}>
-            <ArrowRight className="w-3 h-3 text-slate-600" />
-            <span className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700 flex items-center gap-1">
-              {s.iata}
-              {s.ceivPharmaCertified ? (
-                <BadgeCheck className="w-3 h-3 text-teal-400" aria-label="CEIV Pharma certified" />
-              ) : s.hasGdpCertification ? (
-                <ShieldCheck className="w-3 h-3 text-emerald-400" aria-label="GDP certified" />
-              ) : (
-                <AlertTriangle className="w-3 h-3 text-amber-400" aria-label="Not certified" />
-              )}
-            </span>
-          </React.Fragment>
-        ))}
-        <ArrowRight className="w-3 h-3 text-slate-600" />
-        <span className="px-1.5 py-0.5 rounded bg-purple-500/15 text-purple-300 border border-purple-500/30">{destinationIata}</span>
-      </div>
-
-      <div className="grid grid-cols-2 gap-2 text-[11px]">
-        <div className="p-2 rounded-lg bg-slate-900/80 border border-slate-800">
-          <div className="text-slate-500">Distance</div>
-          <div className="font-bold text-slate-200">{totalDistanceKm.toLocaleString()} km</div>
-        </div>
-        <div className="p-2 rounded-lg bg-slate-900/80 border border-slate-800">
-          <div className="text-slate-500">Est. Transit</div>
-          <div className="font-bold text-slate-200">{estTransitHours < 1 ? `${Math.round(estTransitHours * 60)} min` : `${estTransitHours.toFixed(1)} hrs`}</div>
-        </div>
-        <div className="p-2 rounded-lg bg-slate-900/80 border border-slate-800">
-          <div className="text-slate-500">Customs Delay</div>
-          <div className="font-bold text-slate-200">{totalCustomsDelayHours > 0 ? `~${totalCustomsDelayHours.toFixed(1)} hrs` : 'None'}</div>
-        </div>
-        <div className={`p-2 rounded-lg border ${riskStyles.bg} ${riskStyles.border}`}>
-          <div className="text-slate-500">Est. Risk</div>
-          <div className={`font-bold ${riskStyles.text}`}>{blendedRiskScore}%{corridorFlagCount > 0 ? ` · ${corridorFlagCount} flag${corridorFlagCount > 1 ? 's' : ''}` : ''}</div>
-        </div>
-      </div>
-
-      {action}
-    </div>
-  );
-};
 
 const defaultOrigin = (): AirportValue => ({ city: 'Frankfurt', iata: 'FRA', country: 'Germany', coords: getAirportCoords('FRA') });
 const defaultDestination = (): AirportValue => ({ city: 'Singapore', iata: 'SIN', country: 'Singapore', coords: getAirportCoords('SIN') });
@@ -144,13 +66,21 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
   const [carriers, setCarriers] = useState<Carrier[]>([]);
   const [advisories, setAdvisories] = useState<CorridorAdvisory[]>([]);
   const [performanceByCarrierId, setPerformanceByCarrierId] = useState<Map<string, CarrierPerformanceSummary>>(new Map());
+  const [certStatusByCarrierId, setCertStatusByCarrierId] = useState<Map<string, CarrierCertificationStatus['certificationStatus']>>(new Map());
   useEffect(() => {
     fetchCarriers().then((c) => c && setCarriers(c));
     fetchCorridorAdvisories().then((a) => a && setAdvisories(a));
     fetchCarrierPerformanceSummary().then((rows) => {
       if (rows) setPerformanceByCarrierId(new Map(rows.map((r) => [r.carrierId, r])));
     });
+    fetchCarrierCertificationStatuses().then((rows) => {
+      if (rows) setCertStatusByCarrierId(new Map(rows.map((r) => [r.carrierId, r.certificationStatus])));
+    });
   }, []);
+  const currentUser = useMemo(() => getActiveUser(), []);
+  const { mode: viewMode } = useViewMode();
+  const [advancedRoutingExpanded, setAdvancedRoutingExpanded] = useState(false);
+  const showAdvancedRouting = viewMode === 'advanced' || advancedRoutingExpanded;
 
   // Step 1: Mode
   const [mode, setMode] = useState<TransportMode>('Air');
@@ -159,7 +89,6 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
   const [origin, setOrigin] = useState<AirportValue>(defaultOrigin());
   const [destination, setDestination] = useState<AirportValue>(defaultDestination());
   const [stops, setStops] = useState<DraftStop[]>([]);
-  const [carrier, setCarrier] = useState<string>('Lufthansa Cargo');
   const [productName, setProductName] = useState<string>('Lyophilized Biologics & Vaccines');
   const [productCategory, setProductCategory] = useState<TransportLane['productCategory']>('Vaccines');
   const [payloadValue, setPayloadValue] = useState<number>(3500000);
@@ -214,109 +143,75 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
     });
   }, [origin, destination, stops, mode, tempMin, tempMax]);
 
-  // Route comparison (Step 1 gate): computed suggested alternative vs. the user's drafted route.
-  const [dbBaseRisk, setDbBaseRisk] = useState<LaneBaseRisk | null>(null);
-  useEffect(() => {
-    if (!origin.iata.trim() || !destination.iata.trim()) {
-      setDbBaseRisk(null);
-      return;
-    }
-    let cancelled = false;
-    calculateLaneBaseRisk(origin.iata.toUpperCase(), destination.iata.toUpperCase(), mode, tempRangeType).then((r) => {
-      if (!cancelled) setDbBaseRisk(r);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [origin.iata, destination.iata, mode, tempRangeType]);
-
   const userStops = useMemo(
-    () => stops.filter((s) => s.iata.trim()).map((s) => ({ iata: s.iata.toUpperCase(), city: s.city, coords: s.coords })),
+    () => stops.filter((s) => s.iata.trim()).map((s) => ({ iata: s.iata.toUpperCase(), city: s.city, country: s.country, coords: s.coords })),
     [stops]
   );
 
-  const suggestedStops = useMemo(() => {
-    if (!origin.iata.trim() || !destination.iata.trim()) return [];
-    const recs = recommendStops(origin.coords, destination.coords, origin.iata, destination.iata, tempMin, tempMax, ports, mode, 2);
-    // Order along the route (origin -> destination), not just by recommendation score.
-    return [...recs].sort(
-      (a, b) => alongTrackDistanceKm(a.port.coords, origin.coords, destination.coords) - alongTrackDistanceKm(b.port.coords, origin.coords, destination.coords)
-    );
-  }, [origin, destination, tempMin, tempMax, ports, mode]);
-
-  const suggestedStopsAsPoints = useMemo(
-    () => suggestedStops.map((r) => ({ iata: r.port.code, city: r.port.city, coords: r.port.coords })),
-    [suggestedStops]
+  // Memoized so ThreeWayRouteComparison's effect (keyed on these by reference) doesn't refire
+  // on every unrelated render — origin/destination state itself is already reference-stable
+  // across renders, but a fresh {...} literal in JSX is not.
+  const originWaypoint = useMemo(
+    () => ({ iata: origin.iata.toUpperCase(), city: origin.city, country: origin.country, coords: origin.coords }),
+    [origin]
+  );
+  const destinationWaypoint = useMemo(
+    () => ({ iata: destination.iata.toUpperCase(), city: destination.city, country: destination.country, coords: destination.coords }),
+    [destination]
   );
 
-  const routeIsDifferent = useMemo(() => stopSetsDiffer(userStops, suggestedStopsAsPoints), [userStops, suggestedStopsAsPoints]);
-  const showComparisonGate = origin.iata.trim().length > 0 && destination.iata.trim().length > 0 && routeIsDifferent;
+  // Phase 2: three-way route comparison (User-edited / Recommended / Recommended-from-your-edit).
+  // Simple mode has no UI to edit stops, so its default pick must be 'recommended' (what
+  // SimpleRouteRecommendation actually displays) — defaulting to 'user_edited' here would let
+  // the lane get created from a plain direct route that silently differs from what was shown.
+  const [selectedRouteOption, setSelectedRouteOption] = useState<RouteOptionType>(viewMode === 'simple' ? 'recommended' : 'user_edited');
+  const [computedRouteOptions, setComputedRouteOptions] = useState<ComputedRouteOption[] | null>(null);
 
-  const [comparisonChoice, setComparisonChoice] = useState<'kept' | 'used' | null>(null);
-  useEffect(() => {
-    setComparisonChoice(null);
-  }, [origin.iata, destination.iata]);
-
-  const blendedRiskFor = (corridorScore: number): number => {
-    let heuristicBase = mode === 'Air' ? 14 : mode === 'Sea' ? 24 : mode === 'Road' ? 18 : 20;
-    if (tempRangeType.includes('-80') || tempRangeType.includes('-20')) heuristicBase += 10;
-    const baseline = dbBaseRisk?.riskScore ?? heuristicBase;
-    return Math.round((baseline + corridorScore) / 2);
-  };
-
-  const yourRouteMetrics = useMemo(
-    () => computeRouteMetrics(origin.coords, destination.coords, userStops, mode, ports),
-    [origin, destination, userStops, mode, ports]
-  );
-  const suggestedRouteMetrics = useMemo(
-    () => computeRouteMetrics(origin.coords, destination.coords, suggestedStopsAsPoints, mode, ports),
-    [origin, destination, suggestedStopsAsPoints, mode, ports]
-  );
-
-  const suggestedAssessment = useMemo(() => {
-    if (!origin.iata.trim() || !destination.iata.trim() || !routeIsDifferent) return null;
-    return assessRoute({
-      origin: { iata: origin.iata.toUpperCase(), coords: origin.coords, label: 'Origin' },
-      destination: { iata: destination.iata.toUpperCase(), coords: destination.coords, label: 'Destination' },
-      stops: suggestedStopsAsPoints.map((s) => ({ iata: s.iata, coords: s.coords, label: s.city || s.iata })),
-      mode,
-      tempMin,
-      tempMax,
-    });
-  }, [origin, destination, suggestedStopsAsPoints, routeIsDifferent, mode, tempMin, tempMax]);
-
-  const useSuggestedRoute = () => {
+  const selectRouteOption = (type: RouteOptionType) => {
+    setSelectedRouteOption(type);
+    const opt = computedRouteOptions?.find((o) => o.type === type);
+    if (!opt) return;
+    const intermediate = opt.waypoints.slice(1, -1);
     setStops(
-      suggestedStops.map((r) => ({
-        id: `stop-${Date.now()}-${r.port.code}`,
-        city: r.port.city,
-        iata: r.port.code,
-        country: r.port.country,
-        coords: r.port.coords,
-        stopType: r.port.hasColdStorage ? 'Cold Storage Layover' : 'Transit Hub',
+      intermediate.map((w, i) => ({
+        id: `stop-${Date.now()}-${i}-${w.iata}`,
+        city: w.city,
+        iata: w.iata,
+        country: w.country,
+        coords: w.coords,
+        stopType: 'Transit Hub',
         plannedDwellHours: 2,
       }))
     );
-    setComparisonChoice('used');
+    if (opt.mode !== mode) setMode(opt.mode);
   };
 
-  // Carrier recommendation: weighted, with visible reasoning — advisory only, never forced.
-  const carrierRecommendations = useMemo(
-    () => recommendCarrier(carriers, mode, tempRangeType, origin.country, destination.country, 4, performanceByCarrierId),
-    [carriers, mode, tempRangeType, origin.country, destination.country, performanceByCarrierId]
-  );
-  const topCarrierPick = carrierRecommendations[0] || null;
-  const carrierRunnerUpExplanation = explainTopPick(carrierRecommendations);
+  // Phase 1: per-leg carrier/mode assignment, keyed by 1-based leg sequence — falls back to
+  // that leg's top recommendation until the user overrides it.
+  const [legCarrierOverrides, setLegCarrierOverrides] = useState<Record<number, string>>({});
+  const [legModeOverrides, setLegModeOverrides] = useState<Record<number, LegMode>>({});
 
-  // Auto-fill the carrier field with the top pick the first time real carrier data loads, but
-  // never fight the user's own choice after that.
-  const hasAutoSelectedCarrier = useRef(false);
-  useEffect(() => {
-    if (!hasAutoSelectedCarrier.current && topCarrierPick) {
-      setCarrier(topCarrierPick.carrier.name);
-      hasAutoSelectedCarrier.current = true;
-    }
-  }, [topCarrierPick]);
+  const activeLegs = useMemo(
+    () => computedRouteOptions?.find((o) => o.type === selectedRouteOption)?.legs ?? [],
+    [computedRouteOptions, selectedRouteOption]
+  );
+
+  // Computed directly (not driven by whether LegCarrierBreakdown happens to be mounted) so the
+  // gate still applies in Simple mode even while "Advanced routing options" is collapsed — a
+  // carrier missing its required certification must block lane creation either way.
+  const anyLegCertBlocked = useMemo(
+    () =>
+      activeLegs.some((leg) => {
+        const carrierId = legCarrierOverrides[leg.legSequence] ?? leg.topCarrierPick?.carrier.id ?? null;
+        return !!carrierId && certStatusByCarrierId.get(carrierId) === 'Missing';
+      }),
+    [activeLegs, legCarrierOverrides, certStatusByCarrierId]
+  );
+
+  const resolvedLegCarrierName = (legSequence: number, topPickId: string | null) => {
+    const id = legCarrierOverrides[legSequence] ?? topPickId;
+    return carriers.find((c) => c.id === id)?.name ?? 'Unassigned Carrier';
+  };
 
   // Corridor advisories relevant to the drafted route (Sea mode only — see corridorAdvisories.ts).
   const relevantAdvisories: RelevantAdvisory[] = useMemo(() => {
@@ -329,19 +224,27 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
   // acknowledgment gate at creation time rather than nagging on every intermediate change.
   const pendingOverrides: PendingOverride[] = useMemo(() => {
     const overrides: PendingOverride[] = [];
-    if (showComparisonGate && comparisonChoice === 'kept') {
-      overrides.push({
-        what: 'route recommendation',
-        recommended: `Suggested alternative via ${suggestedStops.map((s) => s.port.code).join(', ') || 'direct'}`,
-        chosen: `Your route via ${userStops.map((s) => s.iata).join(', ') || 'direct'}`,
-      });
+    const recommendedOption = computedRouteOptions?.find((o) => o.type === 'recommended');
+    if (recommendedOption && selectedRouteOption !== 'recommended') {
+      const recommendedIatas = recommendedOption.waypoints.map((w) => w.iata);
+      const selectedIatas = [origin.iata.toUpperCase(), ...userStops.map((s) => s.iata), destination.iata.toUpperCase()];
+      if (stopSetsDiffer(recommendedIatas.map((iata) => ({ iata })), selectedIatas.map((iata) => ({ iata })))) {
+        overrides.push({
+          what: 'route recommendation',
+          recommended: `Recommended route via ${recommendedIatas.join(', ')}`,
+          chosen: `${selectedRouteOption === 'user_edited' ? 'Your route' : 'Recommended-from-your-edit route'} via ${selectedIatas.join(', ')}`,
+        });
+      }
     }
-    if (topCarrierPick && carrier !== topCarrierPick.carrier.name) {
-      overrides.push({
-        what: 'carrier recommendation',
-        recommended: `${topCarrierPick.carrier.name} (score ${topCarrierPick.score}/100)`,
-        chosen: carrier,
-      });
+    for (const leg of activeLegs) {
+      const chosenId = legCarrierOverrides[leg.legSequence] ?? leg.topCarrierPick?.carrier.id ?? null;
+      if (leg.topCarrierPick && chosenId !== leg.topCarrierPick.carrier.id) {
+        overrides.push({
+          what: `carrier recommendation for leg ${leg.legSequence} (${leg.origin.iata}→${leg.destination.iata})`,
+          recommended: `${leg.topCarrierPick.carrier.name} (score ${leg.topCarrierPick.score}/100)`,
+          chosen: resolvedLegCarrierName(leg.legSequence, leg.topCarrierPick.carrier.id),
+        });
+      }
     }
     if (severeAdvisories.length > 0) {
       const a = severeAdvisories[0].advisory;
@@ -352,7 +255,7 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
       });
     }
     return overrides;
-  }, [showComparisonGate, comparisonChoice, suggestedStops, userStops, topCarrierPick, carrier, severeAdvisories, mode]);
+  }, [computedRouteOptions, selectedRouteOption, origin, destination, userStops, activeLegs, legCarrierOverrides, severeAdvisories, mode]);
 
   const [isOverrideModalOpen, setIsOverrideModalOpen] = useState(false);
 
@@ -371,6 +274,7 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
   };
 
   const handleCreateLaneClick = () => {
+    if (anyLegCertBlocked) return;
     if (pendingOverrides.length > 0) {
       setIsOverrideModalOpen(true);
     } else {
@@ -382,15 +286,38 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
     const laneCode = `${origin.iata.toUpperCase()}-${destination.iata.toUpperCase()}-${Math.floor(10 + Math.random() * 89)}`;
     const initTemp = Number(((tempMin + tempMax) / 2 + 0.2).toFixed(1));
 
-    // Automated Composite Risk Calculation: prefer the live calculate_lane_base_risk DB score
-    // (the same one shown in the Step 1 route comparison) over the local heuristic, blended
+    // Per-leg carrier/mode resolution: the user's override where one exists, else that leg's
+    // top recommendation. Unified (single carrier + single mode across every leg) collapses to
+    // one lane-level carrier; otherwise the lane is recorded as multi-carrier.
+    const resolvedLegs = activeLegs.map((l) => ({
+      legSequence: l.legSequence,
+      originPortCode: l.origin.iata,
+      destinationPortCode: l.destination.iata,
+      mode: legModeOverrides[l.legSequence] ?? l.mode,
+      carrierId: legCarrierOverrides[l.legSequence] ?? l.topCarrierPick?.carrier.id ?? null,
+      isRecommendedCarrier: !legCarrierOverrides[l.legSequence] && !!l.topCarrierPick,
+      stopType: (l.legSequence === activeLegs.length ? 'Destination' : 'Transit Hub') as 'Destination' | 'Transit Hub',
+      hoursOnGround: 0,
+      distanceKm: null as number | null,
+      estTransitHours: null as number | null,
+      customsDelayHours: null as number | null,
+      legRiskScore: l.riskScore,
+    }));
+    const unified = legsAreUnified(resolvedLegs.map((l) => ({ mode: l.mode, carrierId: l.carrierId })));
+    const unifiedCarrierId = unified ? resolvedLegs[0]?.carrierId ?? null : null;
+    const unifiedCarrierObj = unifiedCarrierId ? carriers.find((c) => c.id === unifiedCarrierId) : undefined;
+    const resolvedCarrierName = resolvedLegs.length === 0 ? 'Unassigned Carrier' : unified ? unifiedCarrierObj?.name ?? 'Unassigned Carrier' : 'Multiple Carriers';
+
+    // Automated Composite Risk Calculation: prefer the per-leg calculate_lane_base_risk average
+    // (the same scoring shown in the Step 1 route comparison) over the local heuristic, blended
     // with the live corridor risk assessment.
     let initialRiskScore = mode === 'Air' ? 14 : mode === 'Sea' ? 24 : mode === 'Road' ? 18 : 20;
     if (tempRangeType.includes('-80') || tempRangeType.includes('-20')) {
       initialRiskScore += 10;
     }
-    if (dbBaseRisk) {
-      initialRiskScore = dbBaseRisk.riskScore;
+    const legRiskScores = resolvedLegs.map((l) => l.legRiskScore).filter((s): s is number => s != null);
+    if (legRiskScores.length > 0) {
+      initialRiskScore = Math.round(legRiskScores.reduce((sum, s) => sum + s, 0) / legRiskScores.length);
     }
     if (assessment) {
       initialRiskScore = Math.round((initialRiskScore + assessment.overallScore) / 2);
@@ -425,7 +352,7 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
       {
         id: `r-${Date.now()}-2`,
         category: 'Carrier Reliability',
-        title: `${carrier} Cold-Chain SOP Compliance`,
+        title: `${resolvedCarrierName} Cold-Chain SOP Compliance`,
         description: 'Carrier SLA and thermal container maintenance validation.',
         severity: 'Low',
         score: 8,
@@ -468,8 +395,8 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
       destinationCountry: destination.country,
       destinationCoords: destination.coords,
       stops: routeStops,
-      carrier,
-      carrierId: carriers.find((c) => c.name === carrier || c.name.toLowerCase() === carrier.toLowerCase())?.id,
+      carrier: resolvedCarrierName,
+      carrierId: unifiedCarrierId ?? undefined,
       mode,
       productName,
       productCategory,
@@ -511,12 +438,39 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
     // closing abruptly — the user's last impression of the flow should be "done, here's what
     // you got," not the wizard just vanishing.
     setCreatedLane(newLane);
+
+    // Fire-and-forget persistence, matching the pattern used elsewhere in this wizard (e.g.
+    // insertAuditLogEntry) — these writes shouldn't block the confirmation screen from showing.
+    replaceLaneLegs(newLane.id, resolvedLegs);
+    if (computedRouteOptions) {
+      for (const opt of computedRouteOptions) {
+        insertLaneRouteOption(
+          {
+            optionType: opt.type,
+            legsSnapshot: opt.legs.map((l) => ({
+              legSequence: l.legSequence,
+              origin: l.origin.iata,
+              destination: l.destination.iata,
+              mode: l.mode,
+              carrierId: l.topCarrierPick?.carrier.id ?? null,
+              riskScore: l.riskScore,
+            })),
+            totalDistanceKm: opt.totalDistanceKm,
+            totalTransitHours: null,
+            totalCustomsDelayHours: null,
+            totalRiskScore: opt.totalRiskScore,
+            wasChosen: opt.type === selectedRouteOption,
+          },
+          newLane.id,
+          currentUser.id
+        );
+      }
+    }
   };
 
   const stepLabels = ['1. Route & Cargo', '2. Mode', '3. Risk Check', '4. Alert Rules'];
 
-  const canAdvanceFromStep1 =
-    origin.iata.trim().length > 0 && destination.iata.trim().length > 0 && (!showComparisonGate || comparisonChoice !== null);
+  const canAdvanceFromStep1 = origin.iata.trim().length > 0 && destination.iata.trim().length > 0 && computedRouteOptions !== null;
 
   return (
     <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
@@ -650,144 +604,68 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
                   <AirportAutocomplete label="Destination" value={destination} onChange={setDestination} />
                 </div>
 
-                <div className="sm:col-span-2">
-                  <RouteStopsEditor origin={origin} destination={destination} stops={stops} onStopsChange={setStops} tempMin={tempMin} tempMax={tempMax} mode={mode} />
-                </div>
-
-                {origin.iata.trim() && destination.iata.trim() && (
-                  <div className="sm:col-span-2 p-3.5 rounded-xl bg-slate-950/80 border border-slate-800 space-y-3">
-                    <div className="flex items-center justify-between flex-wrap gap-1.5">
-                      <div className="text-[11px] font-bold text-teal-400 uppercase tracking-wider flex items-center gap-1.5">
-                        <RouteIcon className="w-3.5 h-3.5" /> Route Comparison
-                      </div>
-                      {routeIsDifferent ? (
-                        <span className="text-[10px] text-amber-300 font-semibold flex items-center gap-1">
-                          <AlertTriangle className="w-3 h-3" /> Pick one to continue
-                        </span>
-                      ) : (
-                        <span className="text-[10px] text-emerald-400 font-semibold flex items-center gap-1">
-                          <Check className="w-3 h-3" /> Matches our suggested routing
-                        </span>
-                      )}
-                    </div>
-
-                    <div className={`grid grid-cols-1 ${routeIsDifferent ? 'sm:grid-cols-2' : ''} gap-3`}>
-                      <RouteOptionCard
-                        title="Your Route"
-                        originIata={origin.iata.toUpperCase()}
-                        destinationIata={destination.iata.toUpperCase()}
-                        stopDetails={yourRouteMetrics.stopDetails}
-                        totalDistanceKm={yourRouteMetrics.totalDistanceKm}
-                        estTransitHours={yourRouteMetrics.estTransitHours}
-                        totalCustomsDelayHours={yourRouteMetrics.totalCustomsDelayHours}
-                        blendedRiskScore={assessment ? blendedRiskFor(assessment.overallScore) : blendedRiskFor(0)}
-                        corridorFlagCount={assessment ? assessment.legs.filter((l) => l.flags.length > 0).length : 0}
-                        accent="emerald"
-                        selected={!routeIsDifferent || comparisonChoice === 'kept'}
-                        action={
-                          routeIsDifferent ? (
-                            <button
-                              type="button"
-                              onClick={() => setComparisonChoice('kept')}
-                              className={`w-full min-h-[36px] px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all ${
-                                comparisonChoice === 'kept'
-                                  ? 'bg-emerald-600 text-white'
-                                  : 'bg-slate-800 hover:bg-slate-700 text-slate-200'
-                              }`}
-                            >
-                              Keep My Route
-                            </button>
-                          ) : undefined
-                        }
-                      />
-
-                      {routeIsDifferent && (
-                        <RouteOptionCard
-                          title="Suggested Alternative"
-                          originIata={origin.iata.toUpperCase()}
-                          destinationIata={destination.iata.toUpperCase()}
-                          stopDetails={suggestedRouteMetrics.stopDetails}
-                          totalDistanceKm={suggestedRouteMetrics.totalDistanceKm}
-                          estTransitHours={suggestedRouteMetrics.estTransitHours}
-                          totalCustomsDelayHours={suggestedRouteMetrics.totalCustomsDelayHours}
-                          blendedRiskScore={suggestedAssessment ? blendedRiskFor(suggestedAssessment.overallScore) : blendedRiskFor(0)}
-                          corridorFlagCount={suggestedAssessment ? suggestedAssessment.legs.filter((l) => l.flags.length > 0).length : 0}
-                          accent="teal"
-                          selected={comparisonChoice === 'used'}
-                          action={
-                            <button
-                              type="button"
-                              onClick={useSuggestedRoute}
-                              className={`w-full min-h-[36px] px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all flex items-center justify-center gap-1.5 ${
-                                comparisonChoice === 'used'
-                                  ? 'bg-teal-600 text-white'
-                                  : 'bg-teal-500/15 hover:bg-teal-500/25 text-teal-300 border border-teal-500/30'
-                              }`}
-                            >
-                              <Sparkles className="w-3 h-3" /> Use Suggested Route
-                            </button>
-                          }
-                        />
-                      )}
-                    </div>
-
-                    {dbBaseRisk && (
-                      <p className="text-[10px] text-slate-500">
-                        Base risk from live corridor model: {dbBaseRisk.riskScore}% ({dbBaseRisk.riskLevel}) — blended above with each route's own thermal-corridor exposure.
-                      </p>
-                    )}
+                {showAdvancedRouting && (
+                  <div className="sm:col-span-2">
+                    <RouteStopsEditor origin={origin} destination={destination} stops={stops} onStopsChange={setStops} tempMin={tempMin} tempMax={tempMax} mode={mode} />
                   </div>
                 )}
 
-                {/* Carrier & Product */}
-                <div>
-                  <label className="block text-[11px] text-slate-400 mb-1">Carrier</label>
-                  <select
-                    value={carrier}
-                    onChange={(e) => setCarrier(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-100"
-                  >
-                    {carrierRecommendations.length > 0 ? (
-                      carrierRecommendations.map((c) => (
-                        <option key={c.carrier.id} value={c.carrier.name}>
-                          {c.carrier.name} — reliability {c.carrier.reliabilityScore}/100
-                        </option>
-                      ))
-                    ) : (
-                      <>
-                        <option value="DHL Express">DHL Express Pharma Gold</option>
-                        <option value="Lufthansa Cargo">Lufthansa Cargo Pharma Special</option>
-                        <option value="Maersk Line">Maersk Line StarCare Reefer</option>
-                        <option value="Emirates SkyCargo">Emirates SkyCargo Pharma</option>
-                        <option value="Swiss WorldCargo">Swiss WorldCargo Pharma</option>
-                        <option value="FedEx Custom Critical">FedEx Custom Critical Thermal</option>
-                        <option value="Cargolux">Cargolux CV Pharma</option>
-                      </>
+                {origin.iata.trim() && destination.iata.trim() && (
+                  <div className="sm:col-span-2 space-y-2.5">
+                    {viewMode === 'simple' && <SimpleRouteRecommendation options={computedRouteOptions} />}
+
+                    {viewMode === 'simple' && (
+                      <button
+                        type="button"
+                        onClick={() => setAdvancedRoutingExpanded((v) => !v)}
+                        className="w-full flex items-center justify-between px-3 py-2 rounded-lg border border-slate-800 bg-slate-950/50 text-slate-400 hover:text-slate-200 text-xs font-semibold transition-colors"
+                      >
+                        <span>Advanced routing options</span>
+                        {advancedRoutingExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                      </button>
                     )}
-                  </select>
-                  {topCarrierPick && (
-                    <div className="mt-1.5 p-2 rounded-lg bg-teal-500/10 border border-teal-500/25 flex items-start gap-1.5">
-                      <Sparkles className="w-3 h-3 text-teal-400 flex-shrink-0 mt-0.5" />
-                      <div className="text-[11px] text-slate-300 leading-relaxed min-w-0">
-                        <span className="font-bold text-teal-300">Recommended: {topCarrierPick.carrier.name}</span>
-                        <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded bg-teal-500/20 text-teal-300 font-mono">
-                          Match {topCarrierPick.score}/100
-                        </span>
-                        {carrier !== topCarrierPick.carrier.name && (
-                          <button
-                            type="button"
-                            onClick={() => setCarrier(topCarrierPick.carrier.name)}
-                            className="ml-1.5 text-[10px] font-semibold text-teal-400 hover:text-teal-300 underline"
-                          >
-                            Use this
-                          </button>
-                        )}
-                        <div className="text-slate-400">{topCarrierPick.reasons.join(' · ')}</div>
-                        {carrierRunnerUpExplanation && <div className="text-slate-500 mt-0.5 italic">{carrierRunnerUpExplanation}</div>}
-                      </div>
+
+                    {/* ThreeWayRouteComparison stays mounted whenever origin/destination are set,
+                        even collapsed in Simple mode, so it keeps computing in the background —
+                        expanding "Advanced routing options" shouldn't have to wait on a fresh
+                        DB round-trip for something that was already known. */}
+                    <div className={showAdvancedRouting ? '' : 'hidden'}>
+                      <ThreeWayRouteComparison
+                        origin={originWaypoint}
+                        destination={destinationWaypoint}
+                        userStops={userStops}
+                        mode={mode}
+                        tempMin={tempMin}
+                        tempMax={tempMax}
+                        tempRangeType={tempRangeType}
+                        productCategory={productCategory}
+                        ports={ports}
+                        carriers={carriers}
+                        performanceByCarrierId={performanceByCarrierId}
+                        selected={selectedRouteOption}
+                        onSelect={selectRouteOption}
+                        onOptionsComputed={setComputedRouteOptions}
+                      />
                     </div>
-                  )}
-                </div>
+
+                    {/* Per-leg (or unified) carrier assignment */}
+                    {showAdvancedRouting && activeLegs.length > 0 && (
+                      <div className="space-y-1.5">
+                        <label className="block text-[11px] font-bold text-teal-400 uppercase tracking-wider">Carrier Assignment</label>
+                        <LegCarrierBreakdown
+                          legs={activeLegs}
+                          carriers={carriers}
+                          certStatusByCarrierId={certStatusByCarrierId}
+                          assignedCarrierId={legCarrierOverrides}
+                          assignedMode={legModeOverrides}
+                          onCarrierChange={(legSeq, carrierId) => setLegCarrierOverrides((prev) => ({ ...prev, [legSeq]: carrierId }))}
+                          onModeChange={(legSeq, m) => setLegModeOverrides((prev) => ({ ...prev, [legSeq]: m }))}
+                          currentUserId={currentUser.id}
+                        />
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 <div>
                   <label className="block text-[11px] text-slate-400 mb-1">Product Type</label>
@@ -1264,13 +1142,19 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
               <ArrowRight className="w-4 h-4" />
             </button>
           ) : (
-            <button
-              onClick={handleCreateLaneClick}
-              className="flex items-center gap-1.5 px-5 py-2 rounded-lg bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-bold shadow-lg transition-all"
-            >
-              <Check className="w-4 h-4" />
-              <span>Create Lane</span>
-            </button>
+            <div className="flex items-center gap-2">
+              {anyLegCertBlocked && (
+                <span className="text-[11px] text-rose-300 font-semibold">Upload &amp; verify the missing certification(s) to continue.</span>
+              )}
+              <button
+                onClick={handleCreateLaneClick}
+                disabled={anyLegCertBlocked}
+                className="flex items-center gap-1.5 px-5 py-2 rounded-lg bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-bold shadow-lg transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <Check className="w-4 h-4" />
+                <span>Create Lane</span>
+              </button>
+            </div>
           )}
         </div>
         </>

@@ -1,7 +1,8 @@
 import React from 'react';
-import { Search, Bell, Menu } from 'lucide-react';
+import { Search, Bell, Menu, Sparkles, LayoutGrid, Sun, Moon } from 'lucide-react';
 import { AlertNotification } from '../types';
 import { LiveIndicator } from './LiveIndicator';
+import { useViewMode } from '../contexts/ViewModeContext';
 
 interface TopBarProps {
   pageName: string;
@@ -29,8 +30,11 @@ export const TopBar: React.FC<TopBarProps> = ({
   realtimeStatus,
   onOpenMobileNav,
 }) => {
+  const { mode, setMode, theme, setTheme } = useViewMode();
+  const light = theme === 'light';
+
   return (
-    <header className="bg-slate-900/90 backdrop-blur-md border-b border-slate-800 sticky top-0 z-40 px-4 sm:px-6 py-3">
+    <header className={`backdrop-blur-md border-b sticky top-0 z-40 px-4 sm:px-6 py-3 ${light ? 'bg-white/90 border-slate-200' : 'bg-slate-900/90 border-slate-800'}`}>
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-3 min-w-0">
           {onOpenMobileNav && (
@@ -44,11 +48,47 @@ export const TopBar: React.FC<TopBarProps> = ({
           )}
           <div className="min-w-0">
             <div className="text-[11px] text-slate-500 font-medium truncate">PharmaTrack / {pageName}</div>
-            <h1 className="text-base sm:text-lg font-bold text-white truncate">{pageName}</h1>
+            <h1 className={`text-base sm:text-lg font-bold truncate ${light ? 'text-slate-900' : 'text-white'}`}>{pageName}</h1>
           </div>
         </div>
 
-        <div className="flex items-center gap-3 flex-shrink-0">
+        <div className="flex items-center gap-2 flex-shrink-0">
+          {/* Simple/Advanced view-mode toggle — a separate dimension from light/dark theme. */}
+          <div className={`hidden md:flex items-center rounded-lg border p-0.5 text-xs ${light ? 'bg-slate-100 border-slate-200' : 'bg-slate-950 border-slate-700'}`}>
+            <button
+              onClick={() => setMode('simple')}
+              title="Simple: the essentials — totals, what needs attention, a map"
+              className={`px-2.5 py-1 rounded-md font-semibold flex items-center gap-1 transition-colors ${
+                mode === 'simple'
+                  ? 'bg-emerald-600 text-white'
+                  : light ? 'text-slate-500 hover:text-slate-700' : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Sparkles className="w-3 h-3" /> Simple
+            </button>
+            <button
+              onClick={() => setMode('advanced')}
+              title="Advanced: full operational detail — per-leg routing, comparisons, thermal maps"
+              className={`px-2.5 py-1 rounded-md font-semibold flex items-center gap-1 transition-colors ${
+                mode === 'advanced'
+                  ? 'bg-emerald-600 text-white'
+                  : light ? 'text-slate-500 hover:text-slate-700' : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <LayoutGrid className="w-3 h-3" /> Advanced
+            </button>
+          </div>
+
+          <button
+            onClick={() => setTheme(light ? 'dark' : 'light')}
+            title={light ? 'Switch to dark theme' : 'Switch to light theme'}
+            className={`min-w-[36px] min-h-[36px] flex items-center justify-center rounded-lg border transition-colors ${
+              light ? 'bg-slate-100 border-slate-200 text-slate-600 hover:text-slate-900' : 'bg-slate-800 border-slate-700 text-slate-300 hover:text-white'
+            }`}
+          >
+            {light ? <Moon className="w-4 h-4" /> : <Sun className="w-4 h-4" />}
+          </button>
+
           <div className="relative hidden sm:block w-52 lg:w-72">
             <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
             <input

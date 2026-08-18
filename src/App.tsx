@@ -31,6 +31,8 @@ import { EditLaneModal } from './components/EditLaneModal';
 import { CertificationIssue } from './utils/ports';
 import { isLaneExcursing, isLaneHighRisk, getEffectiveRiskLevel, getEffectiveRiskScore } from './utils/laneRisk';
 import { deriveDisruptionsFromAdvisories } from './utils/corridorAdvisories';
+import { useViewMode } from './contexts/ViewModeContext';
+import { SimpleDashboard } from './components/SimpleDashboard';
 import { formatUtcCompact, formatUtcCompactNoSeconds } from './utils/dateFormat';
 import { TemperatureMonitoringSystem } from './components/TemperatureMonitoringSystem';
 import { NewLaneWizardModal } from './components/NewLaneWizardModal';
@@ -663,8 +665,11 @@ export default function App() {
 
   const criticalCount = unreadAlerts.filter(a => a.severity === 'Critical').length;
 
+  const { mode: viewMode, setMode: setViewMode, theme } = useViewMode();
+  const lightShell = theme === 'light';
+
   return (
-    <div className="min-h-screen bg-[#070d14] text-slate-100 font-sans selection:bg-teal-500 selection:text-white flex">
+    <div className={`min-h-screen font-sans selection:bg-teal-500 selection:text-white flex ${lightShell ? 'bg-slate-50 text-slate-900' : 'bg-[#070d14] text-slate-100'}`}>
 
       {/* Persistent Left Sidebar (desktop) */}
       <Sidebar
@@ -735,15 +740,28 @@ export default function App() {
           {criticalCount > 0 && (
             <button
               onClick={() => setIsAlertsCenterOpen(true)}
-              className="mb-5 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-500/20 text-rose-300 border border-rose-500/40 text-xs font-bold motion-safe:animate-pulse hover:bg-rose-500/30 whitespace-nowrap transition-all"
+              className={`mb-5 flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-bold motion-safe:animate-pulse whitespace-nowrap transition-all ${
+                lightShell
+                  ? 'bg-rose-100 text-rose-700 border-rose-300 hover:bg-rose-200'
+                  : 'bg-rose-500/20 text-rose-300 border-rose-500/40 hover:bg-rose-500/30'
+              }`}
             >
-              <AlertTriangle className="w-3.5 h-3.5 text-rose-400" />
+              <AlertTriangle className={`w-3.5 h-3.5 ${lightShell ? 'text-rose-600' : 'text-rose-400'}`} />
               <span>{criticalCount} Critical Excursion{criticalCount > 1 ? 's' : ''} Active</span>
             </button>
           )}
 
         {/* TAB 1: Global Dashboard Overview */}
-        {activeTab === 'DASHBOARD' && (
+        {activeTab === 'DASHBOARD' && viewMode === 'simple' && (
+          <SimpleDashboard
+            lanes={lanes}
+            selectedLaneId={riskModalLane?.id || null}
+            onSelectLane={(lane) => setRiskModalLane(lane)}
+            onGoAdvanced={() => setViewMode('advanced')}
+          />
+        )}
+
+        {activeTab === 'DASHBOARD' && viewMode === 'advanced' && (
           <div>
             {/* Narrow KPI column (ordered by importance) + large map, side by side */}
             <div className="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-5 mb-6 items-start">
@@ -1015,14 +1033,14 @@ export default function App() {
       />
 
       {/* Persistent Global Footer */}
-      <footer className="bg-slate-950/90 border-t border-slate-800/80 px-4 sm:px-6 py-4 mt-8">
-        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-400">
+      <footer className={`border-t px-4 sm:px-6 py-4 mt-8 ${lightShell ? 'bg-white border-slate-200' : 'bg-slate-950/90 border-slate-800/80'}`}>
+        <div className={`max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-3 text-xs ${lightShell ? 'text-slate-500' : 'text-slate-400'}`}>
           <div className="flex items-center gap-2">
             <ShieldCheck className="w-4 h-4 text-emerald-400" />
             <span>PharmaTrack Logistics Platform • Good Distribution Practice Compliant (GDP 2013/C 343/01)</span>
           </div>
           <div className="flex items-center gap-4 text-slate-400">
-            <span>Logged in as: <strong className="text-slate-200">{activeRole.name}</strong> ({activeRole.title})</span>
+            <span>Logged in as: <strong className={lightShell ? 'text-slate-900' : 'text-slate-200'}>{activeRole.name}</strong> ({activeRole.title})</span>
             <span className="font-mono">
               {dataSource === 'cloud' ? `Supabase Cloud (${lanes.length} lanes)` : dataSource === 'local' ? 'Local Demo Dataset' : 'Connecting…'}
             </span>

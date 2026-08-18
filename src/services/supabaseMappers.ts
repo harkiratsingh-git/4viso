@@ -18,6 +18,11 @@ import {
   AdvisorySeverity,
   Carrier,
   CarrierPerformanceSummary,
+  LaneLeg,
+  LaneCarrierSummary,
+  LaneRouteOption,
+  CarrierCertificationStatus,
+  CarrierCertification,
 } from '../types';
 import { formatUtcCompact } from '../utils/dateFormat';
 
@@ -383,6 +388,107 @@ export function mapRowToCarrier(row: any): Carrier {
     reliabilityScore: n(row.reliability_score),
     coldChainSpecialist: Boolean(row.cold_chain_specialist),
     notes: s(row.notes),
+  };
+}
+
+export function mapRowToLaneLeg(row: any): LaneLeg {
+  return {
+    id: s(row.id),
+    laneId: s(row.lane_id),
+    legSequence: n(row.leg_sequence),
+    originPortCode: s(row.origin_port_code).toUpperCase(),
+    destinationPortCode: s(row.destination_port_code).toUpperCase(),
+    mode: s(row.mode) as LaneLeg['mode'],
+    carrierId: row.carrier_id ? s(row.carrier_id) : null,
+    isRecommendedCarrier: Boolean(row.is_recommended_carrier),
+    stopType: row.stop_type ? (s(row.stop_type) as LaneLeg['stopType']) : null,
+    hoursOnGround: n(row.hours_on_ground),
+    distanceKm: row.distance_km != null ? n(row.distance_km) : null,
+    estTransitHours: row.est_transit_hours != null ? n(row.est_transit_hours) : null,
+    customsDelayHours: row.customs_delay_hours != null ? n(row.customs_delay_hours) : null,
+    legRiskScore: row.leg_risk_score != null ? n(row.leg_risk_score) : null,
+  };
+}
+
+export function mapLaneLegToRow(leg: Omit<LaneLeg, 'id'> & { id?: string }) {
+  return {
+    ...(leg.id ? { id: leg.id } : {}),
+    lane_id: leg.laneId,
+    leg_sequence: leg.legSequence,
+    origin_port_code: leg.originPortCode,
+    destination_port_code: leg.destinationPortCode,
+    mode: leg.mode,
+    carrier_id: leg.carrierId,
+    is_recommended_carrier: leg.isRecommendedCarrier,
+    stop_type: leg.stopType,
+    hours_on_ground: leg.hoursOnGround,
+    distance_km: leg.distanceKm,
+    est_transit_hours: leg.estTransitHours,
+    customs_delay_hours: leg.customsDelayHours,
+    leg_risk_score: leg.legRiskScore,
+  };
+}
+
+export function mapRowToLaneCarrierSummary(row: any): LaneCarrierSummary {
+  return {
+    laneId: s(row.lane_id),
+    legCount: n(row.leg_count),
+    distinctCarrierCount: n(row.distinct_carrier_count),
+    distinctModeCount: n(row.distinct_mode_count),
+    unifiedCarrierId: row.unified_carrier_id ? s(row.unified_carrier_id) : null,
+    unifiedMode: row.unified_mode ? s(row.unified_mode) : null,
+  };
+}
+
+export function mapRowToLaneRouteOption(row: any): LaneRouteOption {
+  return {
+    id: s(row.id),
+    laneId: row.lane_id ? s(row.lane_id) : null,
+    optionType: s(row.option_type) as LaneRouteOption['optionType'],
+    legsSnapshot: row.legs_snapshot,
+    totalDistanceKm: row.total_distance_km != null ? n(row.total_distance_km) : null,
+    totalTransitHours: row.total_transit_hours != null ? n(row.total_transit_hours) : null,
+    totalCustomsDelayHours: row.total_customs_delay_hours != null ? n(row.total_customs_delay_hours) : null,
+    totalRiskScore: row.total_risk_score != null ? n(row.total_risk_score) : null,
+    wasChosen: Boolean(row.was_chosen),
+  };
+}
+
+export function mapLaneRouteOptionToRow(opt: Omit<LaneRouteOption, 'id' | 'laneId'>, laneId: string | null, createdBy: string | null) {
+  return {
+    lane_id: laneId,
+    option_type: opt.optionType,
+    legs_snapshot: opt.legsSnapshot,
+    total_distance_km: opt.totalDistanceKm,
+    total_transit_hours: opt.totalTransitHours,
+    total_customs_delay_hours: opt.totalCustomsDelayHours,
+    total_risk_score: opt.totalRiskScore,
+    was_chosen: opt.wasChosen,
+    created_by: createdBy,
+  };
+}
+
+export function mapRowToCarrierCertificationStatus(row: any): CarrierCertificationStatus {
+  return {
+    carrierId: s(row.carrier_id),
+    name: s(row.name),
+    requiresCertificationUpload: Boolean(row.requires_certification_upload),
+    certificationStatus: s(row.certification_status) as CarrierCertificationStatus['certificationStatus'],
+  };
+}
+
+export function mapRowToCarrierCertification(row: any, uploaderName: string | null): CarrierCertification {
+  return {
+    id: s(row.id),
+    carrierId: s(row.carrier_id),
+    documentType: s(row.document_type) as CarrierCertification['documentType'],
+    storagePath: s(row.storage_path),
+    originalFilename: s(row.original_filename),
+    uploadedBy: row.uploaded_by ? s(row.uploaded_by) : null,
+    uploadedByName: uploaderName,
+    uploadedAt: s(row.uploaded_at),
+    status: s(row.status) as CarrierCertification['status'],
+    expiryDate: row.expiry_date ? s(row.expiry_date) : null,
   };
 }
 

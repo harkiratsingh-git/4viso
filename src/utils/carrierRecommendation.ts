@@ -79,7 +79,9 @@ function applyPerformanceAdjustment(score: number, reasons: string[], perf?: Car
 
 export function recommendCarrier(
   carriers: Carrier[],
-  mode: TransportMode,
+  // 'Rail' is a valid per-leg mode (lane_legs.mode) even though it isn't a whole-lane
+  // TransportMode — carriers.modes is a raw string[] from the DB either way.
+  mode: TransportMode | 'Rail',
   tempRangeType: TemperatureRangeType,
   originCountry: string,
   destCountry: string,
