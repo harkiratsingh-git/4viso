@@ -73,3 +73,77 @@ export const ViewModeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 export function useViewMode(): ViewModeContextValue {
   return useContext(ViewModeContext);
 }
+
+/**
+ * Shared light/dark class tokens so ~30 components that were hardcoded dark can all move to a
+ * single, consistent light palette instead of each inventing its own. Named after what each
+ * token replaces (e.g. `cardBg` for what used to be a bare `bg-slate-900`), not what it looks
+ * like, so call sites stay readable. Components with genuinely unique needs (a colored status
+ * badge, a specific accent) still handle those inline — this only covers the structural
+ * slate/white scaffolding repeated across almost every panel in this app.
+ */
+export interface ThemeTokens {
+  light: boolean;
+  pageBg: string;
+  /** Primary card/panel surface — was a bare `bg-slate-900`. */
+  cardBg: string;
+  /** Slightly recessed surface nested inside a card — was `bg-slate-950` or `bg-slate-950/70-90`. */
+  cardBgSunken: string;
+  /** Muted/translucent grouping surface — was `bg-slate-900/30-60`. */
+  cardBgMuted: string;
+  /** Small pill/icon-chip background — was `bg-slate-800`. */
+  chipBg: string;
+  border: string;
+  borderSubtle: string;
+  hoverBorder: string;
+  textPrimary: string;
+  textSecondary: string;
+  textMuted: string;
+  textFaint: string;
+  hoverBg: string;
+  hoverBgSubtle: string;
+}
+
+export function getThemeTokens(theme: AppTheme): ThemeTokens {
+  const light = theme === 'light';
+  return light
+    ? {
+        light: true,
+        pageBg: 'bg-slate-50',
+        cardBg: 'bg-white',
+        cardBgSunken: 'bg-slate-50',
+        cardBgMuted: 'bg-slate-50/80',
+        chipBg: 'bg-slate-100',
+        border: 'border-slate-200',
+        borderSubtle: 'border-slate-200/70',
+        hoverBorder: 'hover:border-slate-300',
+        textPrimary: 'text-slate-900',
+        textSecondary: 'text-slate-700',
+        textMuted: 'text-slate-500',
+        textFaint: 'text-slate-400',
+        hoverBg: 'hover:bg-slate-100',
+        hoverBgSubtle: 'hover:bg-slate-50',
+      }
+    : {
+        light: false,
+        pageBg: 'bg-[#070d14]',
+        cardBg: 'bg-slate-900',
+        cardBgSunken: 'bg-slate-950',
+        cardBgMuted: 'bg-slate-900/40',
+        chipBg: 'bg-slate-800',
+        border: 'border-slate-800',
+        borderSubtle: 'border-slate-800/60',
+        hoverBorder: 'hover:border-slate-700',
+        textPrimary: 'text-white',
+        textSecondary: 'text-slate-300',
+        textMuted: 'text-slate-400',
+        textFaint: 'text-slate-500',
+        hoverBg: 'hover:bg-slate-800',
+        hoverBgSubtle: 'hover:bg-slate-900',
+      };
+}
+
+export function useThemeTokens(): ThemeTokens {
+  const { theme } = useViewMode();
+  return getThemeTokens(theme);
+}

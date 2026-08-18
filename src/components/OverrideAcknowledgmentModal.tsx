@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { AlertTriangle, X } from 'lucide-react';
+import { useThemeTokens } from '../contexts/ViewModeContext';
 
 export interface PendingOverride {
   /** What's being overridden, e.g. "route recommendation" or "corridor advisory". */
@@ -27,27 +28,28 @@ export const OverrideAcknowledgmentModal: React.FC<OverrideAcknowledgmentModalPr
   onCancel,
   onConfirm,
 }) => {
+  const t = useThemeTokens();
   const [reason, setReason] = useState('');
 
   return (
     <div className="fixed inset-0 z-[70] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4" onClick={onCancel}>
       <div
-        className="bg-slate-900 border border-amber-700/50 rounded-2xl w-full max-w-md shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150"
+        className={`${t.cardBg} border rounded-2xl w-full max-w-md shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150 ${t.light ? 'border-amber-300' : 'border-amber-700/50'}`}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="p-4 bg-amber-950/30 border-b border-amber-800/40 flex items-start gap-3">
-          <div className="p-2 rounded-lg bg-amber-500/15 text-amber-400 flex-shrink-0">
+        <div className={`p-4 border-b flex items-start gap-3 ${t.light ? 'bg-amber-50 border-amber-200' : 'bg-amber-950/30 border-amber-800/40'}`}>
+          <div className={`p-2 rounded-lg flex-shrink-0 ${t.light ? 'bg-amber-100 text-amber-600' : 'bg-amber-500/15 text-amber-400'}`}>
             <AlertTriangle className="w-5 h-5" />
           </div>
           <div className="min-w-0">
-            <h2 className="text-sm font-bold text-white">
+            <h2 className={`text-sm font-bold ${t.textPrimary}`}>
               Proceeding despite {overrides.length > 1 ? `${overrides.length} recommendations` : overrides[0]?.what}
             </h2>
-            <p className="text-[11px] text-slate-400 mt-0.5">
+            <p className={`text-[11px] mt-0.5 ${t.textMuted}`}>
               This isn't blocked — it's just recorded to the audit trail, since that's what a GDP audit expects.
             </p>
           </div>
-          <button onClick={onCancel} className="ml-auto p-1 rounded hover:bg-slate-800 text-slate-400 flex-shrink-0">
+          <button onClick={onCancel} className={`ml-auto p-1 rounded flex-shrink-0 ${t.hoverBg} ${t.textMuted}`}>
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -55,36 +57,36 @@ export const OverrideAcknowledgmentModal: React.FC<OverrideAcknowledgmentModalPr
         <div className="p-4 space-y-3 text-xs">
           <div className="space-y-2">
             {overrides.map((o, i) => (
-              <div key={i} className="p-2.5 rounded-lg bg-slate-950/80 border border-slate-800 space-y-1">
-                <div className="text-[10px] font-bold uppercase tracking-wider text-amber-400">{o.what}</div>
+              <div key={i} className={`p-2.5 rounded-lg ${t.cardBgSunken} border ${t.border} space-y-1`}>
+                <div className={`text-[10px] font-bold uppercase tracking-wider ${t.light ? 'text-amber-600' : 'text-amber-400'}`}>{o.what}</div>
                 <div>
-                  <span className="text-slate-500">Recommended: </span>
-                  <span className="text-slate-300">{o.recommended}</span>
+                  <span className={t.textFaint}>Recommended: </span>
+                  <span className={t.textSecondary}>{o.recommended}</span>
                 </div>
                 <div>
-                  <span className="text-slate-500">Proceeding with: </span>
-                  <span className="text-amber-300 font-semibold">{o.chosen}</span>
+                  <span className={t.textFaint}>Proceeding with: </span>
+                  <span className={`font-semibold ${t.light ? 'text-amber-700' : 'text-amber-300'}`}>{o.chosen}</span>
                 </div>
               </div>
             ))}
           </div>
 
           <div>
-            <label className="block text-[11px] text-slate-400 mb-1">Reason (optional)</label>
+            <label className={`block text-[11px] mb-1 ${t.textMuted}`}>Reason (optional)</label>
             <textarea
               value={reason}
               onChange={(e) => setReason(e.target.value)}
               placeholder="e.g. Existing carrier contract, customer requirement…"
               rows={2}
-              className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-100 text-xs resize-none focus:outline-none focus:border-amber-500"
+              className={`w-full ${t.cardBgSunken} border ${t.light ? 'border-slate-300' : 'border-slate-700'} rounded-lg px-2.5 py-1.5 ${t.textPrimary} text-xs resize-none focus:outline-none focus:border-amber-500`}
             />
           </div>
         </div>
 
-        <div className="p-3 bg-slate-950 border-t border-slate-800 flex items-center justify-end gap-2">
+        <div className={`p-3 border-t flex items-center justify-end gap-2 ${t.cardBgSunken} ${t.border}`}>
           <button
             onClick={onCancel}
-            className="min-h-[36px] px-3.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition-colors"
+            className={`min-h-[36px] px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-colors ${t.chipBg} ${t.hoverBg} ${t.textSecondary}`}
           >
             Cancel
           </button>

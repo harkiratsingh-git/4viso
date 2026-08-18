@@ -23,6 +23,8 @@ import {
   LaneRouteOption,
   CarrierCertificationStatus,
   CarrierCertification,
+  LaneDisruption,
+  TransferDocument,
 } from '../types';
 import { formatUtcCompact } from '../utils/dateFormat';
 
@@ -114,6 +116,7 @@ function normalizeAlertType(raw: unknown): AlertNotification['type'] {
   if (v.includes('weather')) return 'WEATHER_DISRUPTION';
   if (v.includes('gdp')) return 'GDP_BREACH';
   if (v.includes('shock')) return 'SHOCK_IMPACT';
+  if (v.includes('carrier')) return 'CARRIER_DISRUPTION';
   return 'TEMPERATURE_EXCURSION';
 }
 
@@ -489,6 +492,39 @@ export function mapRowToCarrierCertification(row: any, uploaderName: string | nu
     uploadedAt: s(row.uploaded_at),
     status: s(row.status) as CarrierCertification['status'],
     expiryDate: row.expiry_date ? s(row.expiry_date) : null,
+    reviewedAt: row.reviewed_at ? s(row.reviewed_at) : null,
+  };
+}
+
+export function mapRowToLaneDisruption(row: any): LaneDisruption {
+  return {
+    id: s(row.id),
+    laneId: s(row.lane_id),
+    legId: s(row.leg_id),
+    disruptionType: s(row.disruption_type) as LaneDisruption['disruptionType'],
+    description: s(row.description),
+    reportedAt: s(row.reported_at),
+    reportedBy: row.reported_by ? s(row.reported_by) : null,
+    status: s(row.status) as LaneDisruption['status'],
+    resolutionCarrierId: row.resolution_carrier_id ? s(row.resolution_carrier_id) : null,
+    resolutionNotes: row.resolution_notes ? s(row.resolution_notes) : null,
+    resolvedAt: row.resolved_at ? s(row.resolved_at) : null,
+    resolvedBy: row.resolved_by ? s(row.resolved_by) : null,
+    capaId: row.capa_id ? s(row.capa_id) : null,
+  };
+}
+
+export function mapRowToTransferDocument(row: any): TransferDocument {
+  return {
+    id: s(row.id),
+    disruptionId: s(row.disruption_id),
+    legId: s(row.leg_id),
+    documentType: s(row.document_type) as TransferDocument['documentType'],
+    storagePath: s(row.storage_path),
+    originalFilename: s(row.original_filename),
+    uploadedBy: row.uploaded_by ? s(row.uploaded_by) : null,
+    uploadedAt: s(row.uploaded_at),
+    notes: row.notes ? s(row.notes) : null,
   };
 }
 

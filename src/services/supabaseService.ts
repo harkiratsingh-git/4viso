@@ -1,5 +1,5 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { TransportLane, AlertNotification, AuditLogEntry, SupabaseSettings, SupabaseUser, CloudSyncState, RiskLevel, CorridorAdvisory, Carrier, CarrierPerformanceSummary, LaneLeg, LaneCarrierSummary, LaneRouteOption, CarrierCertificationStatus, CarrierCertification } from '../types';
+import { TransportLane, AlertNotification, AuditLogEntry, SupabaseSettings, SupabaseUser, CloudSyncState, RiskLevel, CorridorAdvisory, Carrier, CarrierPerformanceSummary, LaneLeg, LaneCarrierSummary, LaneRouteOption, CarrierCertificationStatus, CarrierCertification, LaneDisruption, TransferDocument } from '../types';
 import {
   mapRowToLane,
   mapLaneToRow,
@@ -18,6 +18,8 @@ import {
   mapLaneRouteOptionToRow,
   mapRowToCarrierCertificationStatus,
   mapRowToCarrierCertification,
+  mapRowToLaneDisruption,
+  mapRowToTransferDocument,
 } from './supabaseMappers';
 import { PortEntry, mapPortsRowToEntry } from '../utils/ports';
 
@@ -1164,6 +1166,244 @@ export async function uploadCarrierCertification(
     return { success: false, message: insertError.message };
   }
   return { success: true, message: 'Certification uploaded and pending review.' };
+}
+
+// ---------------------------------------------------------------------------
+// Phase 4: emergency mid-transit disruption handling
+// ---------------------------------------------------------------------------
+
+export async function fetchLaneDisruptions(laneId: string): Promise<LaneDisruption[] | null> {
+  const client = getSupabaseClient();
+  if (!client) return null;
+  const { data, error } = await client.from('lane_disruptions').select('*').eq('lane_id', laneId).order('reported_at', { ascending: false });
+  if (error || !data) {
+    console.warn('lane_disruptions fetch notice:', error?.message);
+    return null;
+  }
+  return data.map(mapRowToLaneDisruption);
+}
+
+export interface ReportDisruptionInput {
+  laneId: string;
+  laneCode: string;
+  legId: string;
+  route: string;
+  disruptionType: LaneDisruption['disruptionType'];
+  description: string;
+  reportedBy: string;
+  /** Drives the auto-created CAPA's priority — a disruption on a Critical-risk or high-value
+   *  cargo lane genuinely warrants a Critical CAPA; a routine Low-risk, low-value lane doesn't,
+   *  so this isn't hardcoded to Critical regardless of what actually got disrupted. */
+  laneRiskLevel: RiskLevel;
+  cargoValueUsd: number;
+}
+
+/** Thresholds are deliberately generous ($1M+/$250K+) since even a "Medium" risk lane carrying
+ *  a multi-million-dollar cold-chain payload mid-transit is not a routine CAPA. */
+function derivedDisruptionCapaPriority(riskLevel: RiskLevel, cargoValueUsd: number): 'Critical' | 'High' | 'Medium' | 'Low' {
+  if (riskLevel === 'Critical' || cargoValueUsd >= 1_000_000) return 'Critical';
+  if (riskLevel === 'High' || cargoValueUsd >= 250_000) return 'High';
+  if (riskLevel === 'Medium') return 'Medium';
+  return 'Low';
+}
+
+/**
+ * Reports a disruption and, per the spec, automatically opens the CAPA a GDP audit would
+ * expect to see for a carrier failure stranding pharma cargo mid-transit — not left for
+ * someone to remember to create separately. capa_records.alert_id is NOT NULL + FK'd to a real
+ * alert_notifications row, so this also creates the CARRIER_DISRUPTION alert that CAPA
+ * references, rather than working around the constraint. Sequenced (alert -> capa ->
+ * disruption) since each later insert references the one before it.
+ */
+export async function reportLaneDisruption(input: ReportDisruptionInput): Promise<{ success: boolean; disruption?: LaneDisruption; message: string }> {
+  const client = getSupabaseClient();
+  if (!client) return { success: false, message: 'Not connected to Supabase.' };
+
+  const priority = derivedDisruptionCapaPriority(input.laneRiskLevel, input.cargoValueUsd);
+  // The alert itself stays Critical severity regardless — a mid-transit carrier disruption is
+  // always urgent to surface — but the CAPA's priority (which drives remediation SLA) reflects
+  // how much is actually at stake on this specific lane.
+  const now = new Date().toISOString();
+  const alertId = `ALT-DISRUPT-${Date.now()}`;
+  const { error: alertError } = await client.from('alert_notifications').insert({
+    id: alertId,
+    lane_id: input.laneId,
+    lane_code: input.laneCode,
+    route: input.route,
+    timestamp: now,
+    alert_type: 'CARRIER_DISRUPTION',
+    severity: 'Critical',
+    title: `${input.disruptionType} — ${input.laneCode}`,
+    message: input.description,
+    current_value: input.disruptionType,
+    threshold_value: 'N/A',
+    is_acknowledged: false,
+    capa_required: true,
+  });
+  if (alertError) return { success: false, message: `Alert creation failed: ${alertError.message}` };
+
+  const capaId = `CAPA-${new Date().getFullYear()}-D${Date.now().toString().slice(-6)}`;
+  const { error: capaError } = await client.from('capa_records').insert({
+    id: capaId,
+    capa_number: capaId,
+    alert_id: alertId,
+    lane_code: input.laneCode,
+    title: `Mid-Transit Disruption: ${input.disruptionType}`,
+    description: input.description,
+    owner: 'Unassigned',
+    status: 'Open',
+    priority,
+  });
+  if (capaError) return { success: false, message: `CAPA creation failed: ${capaError.message}` };
+
+  const { data, error: disruptionError } = await client
+    .from('lane_disruptions')
+    .insert({
+      lane_id: input.laneId,
+      leg_id: input.legId,
+      disruption_type: input.disruptionType,
+      description: input.description,
+      reported_by: input.reportedBy,
+      status: 'Reported',
+      capa_id: capaId,
+    })
+    .select('*')
+    .single();
+  if (disruptionError || !data) return { success: false, message: `Disruption record failed: ${disruptionError?.message}` };
+
+  return { success: true, disruption: mapRowToLaneDisruption(data), message: 'Disruption reported and CAPA opened.' };
+}
+
+/** Wraps the can_extend_carrier_contract(leg_id) RPC — per spec, this is an eligibility gate
+ * on which resolution options are even shown (international leg + carrier already has a
+ * Verified/Not-Required certification on file), not a hard block on the whole flow. */
+export async function checkCanExtendCarrierContract(legId: string): Promise<boolean> {
+  const client = getSupabaseClient();
+  if (!client) return false;
+  const { data, error } = await client.rpc('can_extend_carrier_contract', { p_leg_id: legId });
+  if (error) {
+    console.warn('can_extend_carrier_contract notice:', error.message);
+    return false;
+  }
+  return Boolean(data);
+}
+
+export interface ResolveDisruptionInput {
+  disruptionId: string;
+  resolutionType: 'Resolved - Carrier Replaced' | 'Resolved - Contract Extended' | 'Resolved - Other';
+  /** Legs whose carrier_id should be set to newCarrierId — every remaining leg that was
+   *  assigned to the disrupted carrier, not just the one flagged leg, since a carrier failure
+   *  affects every leg still ahead of it that they were booked for. */
+  affectedLegIds: string[];
+  newCarrierId: string | null;
+  notes: string;
+  resolvedBy: string;
+  correctiveAction: string;
+  preventiveAction?: string;
+  /** For the audit_trail row this write also creates — a GDP audit needs the resolution of a
+   *  mid-transit disruption in the same immutable trail as every other lane action, not just
+   *  reflected in lane_disruptions.status. */
+  laneCode: string;
+  resolvedByName: string;
+  resolvedByRole: string;
+}
+
+/** Resolves a disruption: updates the affected legs' carrier assignment (a no-op value-wise
+ * for the "extend contract" case, but still recorded), closes out the disruption row, closes
+ * the CAPA opened when it was reported with the corrective/preventive action taken, and logs
+ * the resolution to audit_trail. */
+export async function resolveLaneDisruption(input: ResolveDisruptionInput): Promise<{ success: boolean; message: string }> {
+  const client = getSupabaseClient();
+  if (!client) return { success: false, message: 'Not connected to Supabase.' };
+
+  if (input.newCarrierId && input.affectedLegIds.length > 0) {
+    const { error: legsError } = await client
+      .from('lane_legs')
+      .update({ carrier_id: input.newCarrierId, is_recommended_carrier: false })
+      .in('id', input.affectedLegIds);
+    if (legsError) return { success: false, message: `Failed to update leg carrier: ${legsError.message}` };
+  }
+
+  const now = new Date().toISOString();
+  const { data: disruptionRow, error: disruptionError } = await client
+    .from('lane_disruptions')
+    .update({
+      status: input.resolutionType,
+      resolution_carrier_id: input.newCarrierId,
+      resolution_notes: input.notes,
+      resolved_at: now,
+      resolved_by: input.resolvedBy,
+    })
+    .eq('id', input.disruptionId)
+    .select('capa_id')
+    .single();
+  if (disruptionError || !disruptionRow) return { success: false, message: `Failed to update disruption: ${disruptionError?.message}` };
+
+  if (disruptionRow.capa_id) {
+    const { error: capaError } = await client
+      .from('capa_records')
+      .update({
+        status: 'Closed',
+        corrective_action: input.correctiveAction,
+        preventive_action: input.preventiveAction || null,
+        closed_date: now.slice(0, 10),
+      })
+      .eq('id', disruptionRow.capa_id);
+    if (capaError) console.warn('capa_records resolution update notice:', capaError.message);
+  }
+
+  const { error: auditError } = await client.from('audit_trail').insert({
+    id: `log-disrupt-resolve-${Date.now()}`,
+    timestamp: now,
+    actor: input.resolvedByName,
+    role: input.resolvedByRole,
+    lane_code: input.laneCode,
+    action: `Disruption Resolved: ${input.resolutionType}`,
+    category: 'CAPA_LOGGED',
+    details: input.notes || input.correctiveAction,
+    hash: '0x' + Math.random().toString(16).substring(2, 18),
+    status: 'VERIFIED',
+  });
+  if (auditError) console.warn('audit_trail disruption-resolution insert notice:', auditError.message);
+
+  return { success: true, message: 'Disruption resolved.' };
+}
+
+export async function fetchTransferDocuments(disruptionId: string): Promise<TransferDocument[] | null> {
+  const client = getSupabaseClient();
+  if (!client) return null;
+  const { data, error } = await client.from('transfer_documents').select('*').eq('disruption_id', disruptionId).order('uploaded_at', { ascending: false });
+  if (error || !data) {
+    console.warn('transfer_documents fetch notice:', error?.message);
+    return null;
+  }
+  return data.map(mapRowToTransferDocument);
+}
+
+export async function uploadTransferDocument(
+  disruptionId: string,
+  legId: string,
+  file: File,
+  documentType: TransferDocument['documentType'],
+  uploadedBy: string
+): Promise<{ success: boolean; message: string }> {
+  const client = getSupabaseClient();
+  if (!client) return { success: false, message: 'Not connected to Supabase.' };
+
+  const storagePath = `${disruptionId}/${Date.now()}-${file.name}`;
+  const { error: uploadError } = await client.storage.from('transfer-documents').upload(storagePath, file);
+  if (uploadError) return { success: false, message: uploadError.message };
+
+  const { error: insertError } = await client.from('transfer_documents').insert({
+    disruption_id: disruptionId,
+    leg_id: legId,
+    document_type: documentType,
+    storage_path: storagePath,
+    original_filename: file.name,
+    uploaded_by: uploadedBy,
+  });
+  if (insertError) return { success: false, message: insertError.message };
+  return { success: true, message: 'Transfer document uploaded.' };
 }
 
 /**

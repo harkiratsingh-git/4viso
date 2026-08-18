@@ -1,21 +1,20 @@
 import React, { useState } from 'react';
-import { 
-  History, 
-  Search, 
-  Download, 
-  CheckCircle2, 
-  ShieldCheck, 
-  Filter, 
+import {
+  History,
+  Search,
+  CheckCircle2,
   FileSpreadsheet,
   Lock
 } from 'lucide-react';
 import { AuditLogEntry } from '../types';
+import { useThemeTokens } from '../contexts/ViewModeContext';
 
 interface AuditTrailViewProps {
   logs: AuditLogEntry[];
 }
 
 export const AuditTrailView: React.FC<AuditTrailViewProps> = ({ logs }) => {
+  const t = useThemeTokens();
   const [filterCategory, setFilterCategory] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
 
@@ -58,31 +57,37 @@ export const AuditTrailView: React.FC<AuditTrailViewProps> = ({ logs }) => {
     document.body.removeChild(link);
   };
 
+  const fieldClass = `${t.cardBgSunken} ${t.textPrimary} text-xs rounded-lg border ${t.light ? 'border-slate-300' : 'border-slate-700'} focus:outline-none focus:border-emerald-500`;
+
   return (
-    <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-4 sm:p-5 shadow-lg mb-6">
-      
+    <div className={`${t.cardBg} border ${t.border} rounded-xl p-4 sm:p-5 shadow-lg mb-6`}>
+
       {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4 pb-4 border-b border-slate-800">
+      <div className={`flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4 pb-4 border-b ${t.border}`}>
         <div>
           <div className="flex items-center gap-2">
-            <div className="p-1.5 rounded-lg bg-teal-500/10 text-teal-400">
+            <div className={`p-1.5 rounded-lg ${t.light ? 'bg-teal-100 text-teal-600' : 'bg-teal-500/10 text-teal-400'}`}>
               <History className="w-5 h-5" />
             </div>
-            <h3 className="text-base font-bold text-slate-100 flex items-center gap-2">
+            <h3 className={`text-base font-bold flex items-center gap-2 ${t.textPrimary}`}>
               Immutable Regulatory Audit Trail
-              <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
+              <span className={`text-[10px] font-bold px-2 py-0.5 rounded border flex items-center gap-1 ${
+                t.light ? 'bg-emerald-100 text-emerald-700 border-emerald-300' : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+              }`}>
                 <Lock className="w-3 h-3" /> Cryptographically Verified
               </span>
             </h3>
           </div>
-          <p className="text-xs text-slate-400 mt-0.5">
+          <p className={`text-xs mt-0.5 ${t.textMuted}`}>
             Slide 10: "Every lane update, compliance check, and alert is timestamped and logged automatically — exportable to CSV"
           </p>
         </div>
 
         <button
           onClick={handleExportCSV}
-          className="px-3.5 py-2 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 text-xs font-bold flex items-center gap-1.5 transition-all shadow-sm active:scale-95"
+          className={`px-3.5 py-2 rounded-lg border text-xs font-bold flex items-center gap-1.5 transition-all shadow-sm active:scale-95 ${
+            t.light ? 'bg-emerald-100 hover:bg-emerald-200 text-emerald-700 border-emerald-300' : 'bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border-emerald-500/40'
+          }`}
         >
           <FileSpreadsheet className="w-4 h-4" />
           <span>Export Audit Log to CSV</span>
@@ -92,20 +97,20 @@ export const AuditTrailView: React.FC<AuditTrailViewProps> = ({ logs }) => {
       {/* Filters Bar */}
       <div className="flex flex-col sm:flex-row gap-3 mb-4">
         <div className="relative flex-1">
-          <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+          <Search className={`w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 ${t.textFaint}`} />
           <input
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="Search by actor, action, lane code, or keyword..."
-            className="w-full pl-8 pr-3 py-1.5 bg-slate-950 text-slate-100 text-xs rounded-lg border border-slate-700 focus:outline-none focus:border-emerald-500"
+            className={`w-full pl-8 pr-3 py-1.5 ${fieldClass}`}
           />
         </div>
 
         <select
           value={filterCategory}
           onChange={(e) => setFilterCategory(e.target.value)}
-          className="bg-slate-950 text-slate-200 text-xs px-3 py-1.5 rounded-lg border border-slate-700 focus:outline-none focus:border-emerald-500"
+          className={`px-3 py-1.5 ${fieldClass} ${t.textSecondary}`}
         >
           <option value="ALL">All Event Categories</option>
           <option value="TEMPERATURE_MONITORING">Temperature Excursions & Probes</option>
@@ -117,10 +122,10 @@ export const AuditTrailView: React.FC<AuditTrailViewProps> = ({ logs }) => {
       </div>
 
       {/* Audit Table */}
-      <div className="overflow-x-auto rounded-lg border border-slate-800">
+      <div className={`overflow-x-auto rounded-lg border ${t.border}`}>
         <table className="w-full text-left text-xs border-collapse">
           <thead>
-            <tr className="bg-slate-950 border-b border-slate-800 text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+            <tr className={`${t.cardBgSunken} border-b ${t.border} text-[11px] font-bold uppercase tracking-wider ${t.textFaint}`}>
               <th className="py-2.5 px-3">Timestamp (UTC)</th>
               <th className="py-2.5 px-3">Actor & Role</th>
               <th className="py-2.5 px-3">Lane ID</th>
@@ -130,38 +135,40 @@ export const AuditTrailView: React.FC<AuditTrailViewProps> = ({ logs }) => {
               <th className="py-2.5 px-3 text-right">Status</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-800/60 text-slate-300">
+          <tbody className={`divide-y ${t.light ? 'divide-slate-200' : 'divide-slate-800/60'} ${t.textSecondary}`}>
             {filteredLogs.length === 0 ? (
               <tr>
-                <td colSpan={7} className="py-6 text-center text-slate-400">
+                <td colSpan={7} className={`py-6 text-center ${t.textMuted}`}>
                   No audit trail records match the search filter.
                 </td>
               </tr>
             ) : (
               filteredLogs.map((log) => (
-                <tr key={log.id} className="hover:bg-slate-800/40 transition-colors">
-                  <td className="py-2.5 px-3 font-mono text-[11px] text-slate-400 whitespace-nowrap">
+                <tr key={log.id} className={`transition-colors ${t.hoverBgSubtle}`}>
+                  <td className={`py-2.5 px-3 font-mono text-[11px] whitespace-nowrap ${t.textMuted}`}>
                     {log.timestamp}
                   </td>
                   <td className="py-2.5 px-3 whitespace-nowrap">
-                    <div className="font-semibold text-slate-200">{log.actor}</div>
-                    <div className="text-[10px] text-slate-400">{log.role}</div>
+                    <div className={`font-semibold ${t.textSecondary}`}>{log.actor}</div>
+                    <div className={`text-[10px] ${t.textMuted}`}>{log.role}</div>
                   </td>
-                  <td className="py-2.5 px-3 font-mono font-bold text-teal-400 whitespace-nowrap">
+                  <td className={`py-2.5 px-3 font-mono font-bold whitespace-nowrap ${t.light ? 'text-teal-600' : 'text-teal-400'}`}>
                     {log.laneCode}
                   </td>
-                  <td className="py-2.5 px-3 font-medium text-slate-100">
+                  <td className={`py-2.5 px-3 font-medium ${t.textPrimary}`}>
                     {log.action}
                   </td>
-                  <td className="py-2.5 px-3 text-slate-300 max-w-xs truncate" title={log.details}>
+                  <td className={`py-2.5 px-3 max-w-xs truncate ${t.textSecondary}`} title={log.details}>
                     {log.details}
                   </td>
-                  <td className="py-2.5 px-3 font-mono text-[10px] text-slate-400 whitespace-nowrap">
+                  <td className={`py-2.5 px-3 font-mono text-[10px] whitespace-nowrap ${t.textMuted}`}>
                     {log.hash}
                   </td>
                   <td className="py-2.5 px-3 text-right whitespace-nowrap">
-                    <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
-                      <CheckCircle2 className="w-2.5 h-2.5 text-emerald-400" />
+                    <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded border ${
+                      t.light ? 'bg-emerald-100 text-emerald-700 border-emerald-300' : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                    }`}>
+                      <CheckCircle2 className={`w-2.5 h-2.5 ${t.light ? 'text-emerald-600' : 'text-emerald-400'}`} />
                       {log.status}
                     </span>
                   </td>

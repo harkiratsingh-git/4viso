@@ -13,10 +13,6 @@ interface TopBarProps {
   onOpenAlerts: () => void;
   realtimeStatus: 'disabled' | 'connecting' | 'live' | 'reconnecting';
   onOpenMobileNav?: () => void;
-  /** Light theme is only actually built out for the Simple Dashboard — everywhere else stays
-   *  dark regardless of the theme preference, so the combination is never a light shell around
-   *  still-dark content. This is true exactly when App.tsx's own `lightShell` is true. */
-  lightModeAvailable: boolean;
 }
 
 /**
@@ -33,10 +29,9 @@ export const TopBar: React.FC<TopBarProps> = ({
   onOpenAlerts,
   realtimeStatus,
   onOpenMobileNav,
-  lightModeAvailable,
 }) => {
   const { mode, setMode, theme, setTheme } = useViewMode();
-  const light = theme === 'light' && lightModeAvailable;
+  const light = theme === 'light';
 
   return (
     <header className={`backdrop-blur-md border-b sticky top-0 z-40 px-4 sm:px-6 py-3 ${light ? 'bg-white/90 border-slate-200' : 'bg-slate-900/90 border-slate-800'}`}>
@@ -45,14 +40,14 @@ export const TopBar: React.FC<TopBarProps> = ({
           {onOpenMobileNav && (
             <button
               onClick={onOpenMobileNav}
-              className="md:hidden min-w-[40px] min-h-[40px] flex items-center justify-center rounded-lg bg-slate-800 text-slate-300 flex-shrink-0"
+              className={`md:hidden min-w-[40px] min-h-[40px] flex items-center justify-center rounded-lg flex-shrink-0 ${light ? 'bg-slate-100 text-slate-600' : 'bg-slate-800 text-slate-300'}`}
               aria-label="Open navigation menu"
             >
               <Menu className="w-5 h-5" />
             </button>
           )}
           <div className="min-w-0">
-            <div className="text-[11px] text-slate-500 font-medium truncate">PharmaTrack / {pageName}</div>
+            <div className={`text-[11px] font-medium truncate ${light ? 'text-slate-400' : 'text-slate-500'}`}>PharmaTrack / {pageName}</div>
             <h1 className={`text-base sm:text-lg font-bold truncate ${light ? 'text-slate-900' : 'text-white'}`}>{pageName}</h1>
           </div>
         </div>
@@ -85,41 +80,32 @@ export const TopBar: React.FC<TopBarProps> = ({
           </div>
 
           <button
-            onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}
-            title={
-              lightModeAvailable
-                ? light
-                  ? 'Switch to dark theme'
-                  : 'Switch to light theme'
-                : 'Light theme is available on the Simple Dashboard — the rest of the app uses a fixed dark theme'
-            }
-            className={`relative min-w-[36px] min-h-[36px] flex items-center justify-center rounded-lg border transition-colors ${
-              light
-                ? 'bg-slate-100 border-slate-200 text-slate-600 hover:text-slate-900'
-                : lightModeAvailable
-                ? 'bg-slate-800 border-slate-700 text-slate-300 hover:text-white'
-                : 'bg-slate-800/60 border-slate-700/60 text-slate-500 hover:text-slate-300'
+            onClick={() => setTheme(light ? 'dark' : 'light')}
+            title={light ? 'Switch to dark theme' : 'Switch to light theme'}
+            className={`min-w-[36px] min-h-[36px] flex items-center justify-center rounded-lg border transition-colors ${
+              light ? 'bg-slate-100 border-slate-200 text-slate-600 hover:text-slate-900' : 'bg-slate-800 border-slate-700 text-slate-300 hover:text-white'
             }`}
           >
-            {theme === 'light' ? <Moon className="w-4 h-4" /> : <Sun className="w-4 h-4" />}
-            {!lightModeAvailable && theme === 'light' && (
-              <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-amber-400" title="Light theme preference saved, but not active here" />
-            )}
+            {light ? <Moon className="w-4 h-4" /> : <Sun className="w-4 h-4" />}
           </button>
 
           <div className="relative hidden sm:block w-52 lg:w-72">
-            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+            <Search className={`w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 ${light ? 'text-slate-400' : 'text-slate-400'}`} />
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => onSearchChange(e.target.value)}
               placeholder="Search lane, city, carrier…"
-              className="w-full pl-9 pr-12 py-1.5 text-xs bg-slate-950/70 text-slate-100 placeholder-slate-500 rounded-lg border border-slate-700 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/50 transition-all"
+              className={`w-full pl-9 pr-12 py-1.5 text-xs rounded-lg border focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/50 transition-all ${
+                light
+                  ? 'bg-slate-50 text-slate-900 placeholder-slate-400 border-slate-200'
+                  : 'bg-slate-950/70 text-slate-100 placeholder-slate-500 border-slate-700'
+              }`}
             />
             {searchQuery ? (
               <button
                 onClick={() => onSearchChange('')}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-white"
+                className={`absolute right-2.5 top-1/2 -translate-y-1/2 text-xs ${light ? 'text-slate-400 hover:text-slate-900' : 'text-slate-400 hover:text-white'}`}
               >
                 Clear
               </button>
@@ -127,7 +113,9 @@ export const TopBar: React.FC<TopBarProps> = ({
               <button
                 onClick={onOpenCommandPalette}
                 title="Open command palette: jump to any lane, or run a command"
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700 hover:text-slate-200 hover:border-slate-600 transition-colors"
+                className={`absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-mono px-1.5 py-0.5 rounded border transition-colors ${
+                  light ? 'bg-slate-100 text-slate-500 border-slate-200 hover:text-slate-800 hover:border-slate-300' : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-slate-200 hover:border-slate-600'
+                }`}
               >
                 ⌘K
               </button>
@@ -136,10 +124,12 @@ export const TopBar: React.FC<TopBarProps> = ({
 
           <button
             onClick={onOpenAlerts}
-            className="relative min-w-[40px] min-h-[40px] flex items-center justify-center rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors flex-shrink-0"
+            className={`relative min-w-[40px] min-h-[40px] flex items-center justify-center rounded-lg border transition-colors flex-shrink-0 ${
+              light ? 'bg-slate-100 hover:bg-slate-200 text-slate-600 border-slate-200' : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700'
+            }`}
             title="Open Real-time Alerts Panel"
           >
-            <Bell className="w-4 h-4 text-slate-300" />
+            <Bell className={`w-4 h-4 ${light ? 'text-slate-500' : 'text-slate-300'}`} />
             {unreadAlerts.length > 0 && (
               <span className="absolute -top-1 -right-1 px-1.5 py-0.5 rounded-full text-[10px] font-extrabold bg-rose-600 text-white shadow-lg animate-pulse">
                 {unreadAlerts.length}

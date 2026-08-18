@@ -29,6 +29,18 @@ const CEIV_PHARMA_CERTIFIED_CODES = new Set([
   'BRU', 'FRA', 'AMS', 'ZRH', 'LGG', 'SIN', 'MIA', 'DFW', 'HKG', 'HYD', 'BOM', 'PVG', 'ATL', 'DXB', 'DWC',
 ]);
 
+/**
+ * Real-world cargo airports that sit directly alongside (or effectively are) one of the
+ * world's major seaports — Hong Kong, Singapore, Shanghai (Yangshan), Jebel Ali/Dubai, LA/Long
+ * Beach, New York/New Jersey, Incheon, Jawaharlal Nehru/Mumbai, Cape Town, Port Botany/Sydney,
+ * plus Rotterdam's own airport code. Mirrors the same 'Multimodal' tagging applied to the live
+ * Supabase `ports` table for these codes, so a viable Sea backup mode can be recommended for
+ * these routes even in local/offline demo mode, not only when Supabase is reachable — without
+ * this, `hasSeaCapablePortNear` would find no Sea/Multimodal port anywhere near most of the
+ * world's actual busiest seaports, since the rest of this static directory is Air-only.
+ */
+const SEA_CAPABLE_HUB_CODES = new Set(['HKG', 'SIN', 'PVG', 'DXB', 'LAX', 'JFK', 'ICN', 'BOM', 'CPT', 'SYD', 'RTM']);
+
 const COUNTRY_CODE_NAMES: Record<string, string> = {
   BE: 'Belgium', DE: 'Germany', NL: 'Netherlands', IT: 'Italy', FR: 'France', CH: 'Switzerland',
   GB: 'United Kingdom', IE: 'Ireland', ES: 'Spain', AT: 'Austria', LU: 'Luxembourg', SE: 'Sweden',
@@ -46,7 +58,7 @@ export const LOCAL_PORTS_FALLBACK: PortEntry[] = AIRPORT_DIRECTORY.map((a) => ({
   city: a.city,
   country: a.country,
   coords: a.coords,
-  portType: 'Air',
+  portType: SEA_CAPABLE_HUB_CODES.has(a.iata.toUpperCase()) ? 'Multimodal' : 'Air',
   hasColdStorage: true,
   hasGdpCertification: true,
   ceivPharmaCertified: CEIV_PHARMA_CERTIFIED_CODES.has(a.iata.toUpperCase()),
@@ -121,6 +133,49 @@ function hasSeaCapablePortNear(coords: [number, number], ports: PortEntry[]): bo
   return ports.some(
     (p) => (p.portType === 'Sea' || p.portType === 'Multimodal') && haversineKm(coords, p.coords) <= SEA_PORT_PROXIMITY_KM
   );
+}
+
+export interface BackupModeRecommendation {
+  mode: TransportMode;
+  reason: string;
+}
+
+/**
+ * A genuine alternate transport mode for this route, distinct from the primary mode's backup
+ * carrier (a different carrier on the *same* mode). Only Air<->Sea swaps are considered — the
+ * two long-haul modes this app has real routing data for — and only when geography actually
+ * supports it (sea-capable ports near both ends for a Sea backup; short Road-range routes get
+ * no Sea backup since there's no meaningful long-haul alternative to suggest). Returns null
+ * rather than forcing a backup mode suggestion onto a route that doesn't have a sound one.
+ */
+export function findBackupTransportMode(
+  primaryMode: TransportMode,
+  originCoords: [number, number],
+  destCoords: [number, number],
+  ports: PortEntry[]
+): BackupModeRecommendation | null {
+  const distanceKm = Math.round(haversineKm(originCoords, destCoords));
+  if (primaryMode === 'Air') {
+    if (distanceKm < 900) return null; // short enough that Road is the real fallback, not Sea
+    if (hasSeaCapablePortNear(originCoords, ports) && hasSeaCapablePortNear(destCoords, ports)) {
+      return {
+        mode: 'Sea',
+        reason: `A sea-capable port sits near both ends of this ${distanceKm}km route — reefer container is a slower but genuine fallback if air capacity falls through.`,
+      };
+    }
+    return null;
+  }
+  if (primaryMode === 'Sea') {
+    if (!hasSeaCapablePortNear(originCoords, ports) || !hasSeaCapablePortNear(destCoords, ports)) return null;
+    return {
+      mode: 'Air',
+      reason: `Air is a costlier but viable fallback for this ${distanceKm}km route if the sailing schedule slips or cold-chain risk rises mid-voyage.`,
+    };
+  }
+  // Road and Multimodal aren't meaningfully "backed up" by swapping to a single alternate mode
+  // on the same route — Road only gets recommended when the distance is already short enough
+  // that Air/Sea aren't realistic alternatives, and Multimodal already blends modes.
+  return null;
 }
 
 export function recommendTransportMode(

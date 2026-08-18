@@ -3,6 +3,7 @@ import { MapPin, Pencil, ShieldCheck } from 'lucide-react';
 import { getAirportCoords } from '../utils/geo';
 import { PortEntry, searchPorts } from '../utils/ports';
 import { usePorts } from '../contexts/PortsContext';
+import { useThemeTokens } from '../contexts/ViewModeContext';
 
 export interface AirportValue {
   city: string;
@@ -28,6 +29,7 @@ export const AirportAutocomplete: React.FC<AirportAutocompleteProps> = ({
   onChange,
   placeholder,
 }) => {
+  const t = useThemeTokens();
   const [query, setQuery] = useState(value.iata ? `${value.city} (${value.iata})` : '');
   const [isOpen, setIsOpen] = useState(false);
   const [highlighted, setHighlighted] = useState(0);
@@ -73,15 +75,17 @@ export const AirportAutocomplete: React.FC<AirportAutocompleteProps> = ({
     }
   };
 
+  const fieldClass = `bg-transparent border ${t.light ? 'border-slate-300' : 'border-slate-700'} rounded px-2 py-1.5 ${t.textPrimary} text-xs`;
+
   if (manualMode) {
     return (
       <div>
         <div className="flex items-center justify-between mb-1">
-          <label className="text-[11px] text-slate-400">{label}</label>
+          <label className={`text-[11px] ${t.textMuted}`}>{label}</label>
           <button
             type="button"
             onClick={() => setManualMode(false)}
-            className="text-[10px] text-teal-400 hover:text-teal-300 font-semibold"
+            className={`text-[10px] font-semibold ${t.light ? 'text-teal-600 hover:text-teal-700' : 'text-teal-400 hover:text-teal-300'}`}
           >
             Search hubs instead
           </button>
@@ -92,7 +96,7 @@ export const AirportAutocomplete: React.FC<AirportAutocompleteProps> = ({
             value={value.city}
             onChange={(e) => onChange({ ...value, city: e.target.value })}
             placeholder="City"
-            className="col-span-1 bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-slate-100 text-xs"
+            className={`col-span-1 ${t.cardBg} border ${t.light ? 'border-slate-300' : 'border-slate-700'} rounded px-2 py-1.5 ${t.textPrimary} text-xs`}
           />
           <input
             type="text"
@@ -103,14 +107,14 @@ export const AirportAutocomplete: React.FC<AirportAutocompleteProps> = ({
             }}
             placeholder="IATA"
             maxLength={4}
-            className="col-span-1 bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-slate-100 text-xs uppercase"
+            className={`col-span-1 ${t.cardBg} border ${t.light ? 'border-slate-300' : 'border-slate-700'} rounded px-2 py-1.5 ${t.textPrimary} text-xs uppercase`}
           />
           <input
             type="text"
             value={value.country}
             onChange={(e) => onChange({ ...value, country: e.target.value })}
             placeholder="Country"
-            className="col-span-1 bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-slate-100 text-xs"
+            className={`col-span-1 ${t.cardBg} border ${t.light ? 'border-slate-300' : 'border-slate-700'} rounded px-2 py-1.5 ${t.textPrimary} text-xs`}
           />
         </div>
       </div>
@@ -120,17 +124,17 @@ export const AirportAutocomplete: React.FC<AirportAutocompleteProps> = ({
   return (
     <div ref={containerRef} className="relative">
       <div className="flex items-center justify-between mb-1">
-        <label className="text-[11px] text-slate-400">{label}</label>
+        <label className={`text-[11px] ${t.textMuted}`}>{label}</label>
         <button
           type="button"
           onClick={() => setManualMode(true)}
-          className="text-[10px] text-slate-500 hover:text-slate-300 font-semibold flex items-center gap-0.5"
+          className={`text-[10px] font-semibold flex items-center gap-0.5 ${t.light ? 'text-slate-500 hover:text-slate-700' : 'text-slate-500 hover:text-slate-300'}`}
         >
           <Pencil className="w-2.5 h-2.5" /> Enter manually
         </button>
       </div>
       <div className="relative">
-        <MapPin className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+        <MapPin className={`w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none ${t.textFaint}`} />
         <input
           type="text"
           value={query}
@@ -142,13 +146,13 @@ export const AirportAutocomplete: React.FC<AirportAutocompleteProps> = ({
           onFocus={() => setIsOpen(true)}
           onKeyDown={handleKeyDown}
           placeholder={placeholder || 'Search city, country, or IATA code…'}
-          className="w-full bg-slate-900 border border-slate-700 rounded-lg pl-8 pr-3 py-1.5 text-slate-100 text-xs focus:outline-none focus:border-emerald-500"
+          className={`w-full ${t.cardBg} border ${t.light ? 'border-slate-300' : 'border-slate-700'} rounded-lg pl-8 pr-3 py-1.5 ${t.textPrimary} text-xs focus:outline-none focus:border-emerald-500`}
           autoComplete="off"
         />
       </div>
 
       {isOpen && suggestions.length > 0 && (
-        <div className="absolute z-20 mt-1 w-full bg-slate-950 border border-slate-700 rounded-lg shadow-xl max-h-52 overflow-y-auto">
+        <div className={`absolute z-20 mt-1 w-full ${t.cardBg} border ${t.light ? 'border-slate-300' : 'border-slate-700'} rounded-lg shadow-xl max-h-52 overflow-y-auto`}>
           {suggestions.map((s, i) => (
             <button
               key={s.code}
@@ -159,15 +163,17 @@ export const AirportAutocomplete: React.FC<AirportAutocompleteProps> = ({
               }}
               onMouseEnter={() => setHighlighted(i)}
               className={`w-full text-left px-3 py-2 text-xs flex items-center justify-between gap-2 transition-colors ${
-                i === highlighted ? 'bg-emerald-500/15 text-emerald-200' : 'text-slate-200 hover:bg-slate-900'
+                i === highlighted
+                  ? t.light ? 'bg-emerald-100 text-emerald-700' : 'bg-emerald-500/15 text-emerald-200'
+                  : `${t.textSecondary} ${t.hoverBgSubtle}`
               }`}
               title={s.hasGdpCertification ? 'GDP certified facility' : undefined}
             >
               <span className="truncate flex items-center gap-1">
-                {s.city} <span className="text-slate-500">· {s.country}</span>
-                {s.hasGdpCertification && <ShieldCheck className="w-3 h-3 text-emerald-400 flex-shrink-0" />}
+                {s.city} <span className={t.textMuted}>· {s.country}</span>
+                {s.hasGdpCertification && <ShieldCheck className={`w-3 h-3 flex-shrink-0 ${t.light ? 'text-emerald-600' : 'text-emerald-400'}`} />}
               </span>
-              <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-teal-300 flex-shrink-0">
+              <span className={`font-mono text-[10px] px-1.5 py-0.5 rounded flex-shrink-0 ${t.chipBg} ${t.light ? 'text-teal-700' : 'text-teal-300'}`}>
                 {s.code}
               </span>
             </button>
@@ -176,13 +182,13 @@ export const AirportAutocomplete: React.FC<AirportAutocompleteProps> = ({
       )}
 
       {isOpen && query.trim().length > 0 && suggestions.length === 0 && (
-        <div className="absolute z-20 mt-1 w-full bg-slate-950 border border-slate-700 rounded-lg shadow-xl p-3 text-[11px] text-slate-400">
+        <div className={`absolute z-20 mt-1 w-full ${t.cardBg} border ${t.light ? 'border-slate-300' : 'border-slate-700'} rounded-lg shadow-xl p-3 text-[11px] ${t.textMuted}`}>
           No matching hub in our directory. Use "Enter manually" above for a custom location.
         </div>
       )}
 
       {value.iata && !isOpen && (
-        <div className="mt-1 text-[10px] text-slate-500">{value.country}</div>
+        <div className={`mt-1 text-[10px] ${t.textFaint}`}>{value.country}</div>
       )}
     </div>
   );

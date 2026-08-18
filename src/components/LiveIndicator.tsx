@@ -1,5 +1,6 @@
 import React from 'react';
 import { Radio, RefreshCw } from 'lucide-react';
+import { useThemeTokens } from '../contexts/ViewModeContext';
 
 interface LiveIndicatorProps {
   status: 'disabled' | 'connecting' | 'live' | 'reconnecting';
@@ -14,10 +15,12 @@ interface LiveIndicatorProps {
  * prefers-reduced-motion via Tailwind's motion-safe: variant.
  */
 export const LiveIndicator: React.FC<LiveIndicatorProps> = ({ status, localLabel = 'Local Simulation', className = '' }) => {
+  const t = useThemeTokens();
+
   if (status === 'disabled') {
     return (
-      <span className={`inline-flex items-center gap-1.5 text-slate-500 ${className}`}>
-        <span className="w-1.5 h-1.5 rounded-full bg-slate-600" />
+      <span className={`inline-flex items-center gap-1.5 ${t.textMuted} ${className}`}>
+        <span className={`w-1.5 h-1.5 rounded-full ${t.light ? 'bg-slate-400' : 'bg-slate-600'}`} />
         {localLabel}
       </span>
     );
@@ -25,7 +28,7 @@ export const LiveIndicator: React.FC<LiveIndicatorProps> = ({ status, localLabel
 
   if (status === 'connecting') {
     return (
-      <span className={`inline-flex items-center gap-1.5 text-slate-400 ${className}`}>
+      <span className={`inline-flex items-center gap-1.5 ${t.textMuted} ${className}`}>
         <RefreshCw className="w-3 h-3 motion-safe:animate-spin" />
         Connecting…
       </span>
@@ -34,7 +37,7 @@ export const LiveIndicator: React.FC<LiveIndicatorProps> = ({ status, localLabel
 
   if (status === 'reconnecting') {
     return (
-      <span className={`inline-flex items-center gap-1.5 text-amber-400 ${className}`}>
+      <span className={`inline-flex items-center gap-1.5 ${t.light ? 'text-amber-600' : 'text-amber-400'} ${className}`}>
         <span className="w-1.5 h-1.5 rounded-full bg-amber-500 motion-safe:animate-pulse" />
         Reconnecting…
       </span>
@@ -42,7 +45,7 @@ export const LiveIndicator: React.FC<LiveIndicatorProps> = ({ status, localLabel
   }
 
   return (
-    <span className={`inline-flex items-center gap-1.5 text-emerald-400 ${className}`}>
+    <span className={`inline-flex items-center gap-1.5 ${t.light ? 'text-emerald-600' : 'text-emerald-400'} ${className}`}>
       <Radio className="w-3 h-3 motion-safe:animate-pulse" />
       Live
     </span>

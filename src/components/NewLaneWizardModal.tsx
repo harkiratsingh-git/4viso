@@ -17,7 +17,7 @@ import {
 import { TransportLane, TransportMode, TemperatureRangeType, RiskFactor, RouteStop, Carrier, CorridorAdvisory, AuditLogEntry, CarrierPerformanceSummary, CarrierCertificationStatus } from '../types';
 import { getAirportCoords } from '../utils/geo';
 import { assessRoute } from '../utils/riskAssessment';
-import { recommendTransportMode } from '../utils/ports';
+import { recommendTransportMode, findBackupTransportMode } from '../utils/ports';
 import { stopSetsDiffer } from '../utils/routeComparison';
 import { getRiskColor } from '../utils/formatters';
 import { formatUtcCompactNoSeconds } from '../utils/dateFormat';
@@ -38,9 +38,9 @@ import { usePorts } from '../contexts/PortsContext';
 import { OverrideAcknowledgmentModal, PendingOverride } from './OverrideAcknowledgmentModal';
 import { ThreeWayRouteComparison, ComputedRouteOption, RouteOptionType } from './ThreeWayRouteComparison';
 import { LegCarrierBreakdown } from './LegCarrierBreakdown';
-import { SimpleRouteRecommendation } from './SimpleRouteRecommendation';
-import { LegMode, legsAreUnified } from '../utils/legRecommendation';
-import { useViewMode } from '../contexts/ViewModeContext';
+import { SimpleRouteRecommendation, BackupModeInfo } from './SimpleRouteRecommendation';
+import { LegMode, legsAreUnified, computeLegRecommendations } from '../utils/legRecommendation';
+import { useViewMode, useThemeTokens } from '../contexts/ViewModeContext';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 
 interface NewLaneWizardModalProps {
@@ -65,6 +65,7 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
   onLogAuditEntry,
   dataSource,
 }) => {
+  const t = useThemeTokens();
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
   const [createdLane, setCreatedLane] = useState<TransportLane | null>(null);
   const { ports } = usePorts();
@@ -134,6 +135,39 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
     if (!origin.iata.trim() || !destination.iata.trim()) return null;
     return recommendTransportMode(origin.coords, destination.coords, tempMin, tempMax, productCategory, ports);
   }, [origin, destination, tempMin, tempMax, productCategory, ports]);
+
+  // Genuine alternate-mode backup (Sea<->Air) for the drafted route, distinct from the same-mode
+  // backup carrier shown in SimpleRouteRecommendation — null whenever no reasonable alternate
+  // mode exists, rather than forcing one just to fill the field.
+  const [backupModeInfo, setBackupModeInfo] = useState<BackupModeInfo | null>(null);
+  useEffect(() => {
+    if (!origin.iata.trim() || !destination.iata.trim()) {
+      setBackupModeInfo(null);
+      return;
+    }
+    const backup = findBackupTransportMode(mode, origin.coords, destination.coords, ports);
+    if (!backup) {
+      setBackupModeInfo(null);
+      return;
+    }
+    let cancelled = false;
+    computeLegRecommendations(
+      [
+        { iata: origin.iata.toUpperCase(), city: origin.city, country: origin.country, coords: origin.coords },
+        { iata: destination.iata.toUpperCase(), city: destination.city, country: destination.country, coords: destination.coords },
+      ],
+      backup.mode,
+      tempRangeType,
+      carriers,
+      performanceByCarrierId
+    ).then((legs) => {
+      if (cancelled) return;
+      setBackupModeInfo({ mode: backup.mode, reason: backup.reason, carrierName: legs[0]?.topCarrierPick?.carrier.name ?? null });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [origin, destination, mode, ports, tempRangeType, carriers, performanceByCarrierId]);
 
   // Live risk assessment of the drafted route (Step 3)
   const assessment = useMemo(() => {
@@ -492,48 +526,53 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
 
   const canAdvanceFromStep1 = origin.iata.trim().length > 0 && destination.iata.trim().length > 0 && computedRouteOptions !== null;
 
+  const finishedRiskStyles = createdLane ? getRiskColor(createdLane.riskLevel, t.light) : null;
+  const selectClass = `w-full ${t.cardBgSunken} border ${t.light ? 'border-slate-300' : 'border-slate-700'} rounded-lg px-2.5 py-1.5 ${t.textPrimary}`;
+
   return (
     <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
-      <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-3xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+      <div className={`${t.cardBg} border ${t.light ? 'border-slate-300' : 'border-slate-700'} rounded-2xl w-full max-w-3xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200`}>
 
-        {createdLane ? (
+        {createdLane && finishedRiskStyles ? (
           /* Peak-end confirmation: calm summary + a clear next step, not an abrupt close. */
           <div className="p-6 sm:p-8 text-center space-y-5">
-            <div className="w-14 h-14 mx-auto rounded-full bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center motion-safe:animate-in motion-safe:zoom-in duration-300">
-              <Check className="w-7 h-7 text-emerald-400" />
+            <div className={`w-14 h-14 mx-auto rounded-full border flex items-center justify-center motion-safe:animate-in motion-safe:zoom-in duration-300 ${
+              t.light ? 'bg-emerald-100 border-emerald-300' : 'bg-emerald-500/15 border-emerald-500/30'
+            }`}>
+              <Check className={`w-7 h-7 ${t.light ? 'text-emerald-600' : 'text-emerald-400'}`} />
             </div>
             <div>
-              <h2 className="text-lg font-bold text-white">Lane Provisioned</h2>
-              <p className="text-xs text-slate-400 mt-1">
+              <h2 className={`text-lg font-bold ${t.textPrimary}`}>Lane Provisioned</h2>
+              <p className={`text-xs mt-1 ${t.textMuted}`}>
                 {createdLane.laneCode} is now live with threshold alert automation enabled.
               </p>
             </div>
 
-            <div className="p-4 rounded-xl bg-slate-950/80 border border-slate-800 text-left space-y-3 max-w-md mx-auto">
+            <div className={`p-4 rounded-xl ${t.cardBgSunken} border ${t.border} text-left space-y-3 max-w-md mx-auto`}>
               <div className="flex items-center justify-center gap-1.5 text-[11px] font-mono">
-                <span className="px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">{createdLane.originIata}</span>
+                <span className={`px-2 py-0.5 rounded border ${t.light ? 'bg-emerald-100 text-emerald-700 border-emerald-300' : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'}`}>{createdLane.originIata}</span>
                 {createdLane.stops.map((s) => (
                   <React.Fragment key={s.id}>
-                    <ArrowRight className="w-3 h-3 text-slate-600" />
-                    <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">{s.iata}</span>
+                    <ArrowRight className={`w-3 h-3 ${t.textFaint}`} />
+                    <span className={`px-2 py-0.5 rounded ${t.chipBg} ${t.textSecondary} border ${t.light ? 'border-slate-300' : 'border-slate-700'}`}>{s.iata}</span>
                   </React.Fragment>
                 ))}
-                <ArrowRight className="w-3 h-3 text-slate-600" />
-                <span className="px-2 py-0.5 rounded bg-purple-500/15 text-purple-300 border border-purple-500/30">{createdLane.destinationIata}</span>
+                <ArrowRight className={`w-3 h-3 ${t.textFaint}`} />
+                <span className={`px-2 py-0.5 rounded border ${t.light ? 'bg-purple-100 text-purple-700 border-purple-300' : 'bg-purple-500/15 text-purple-300 border-purple-500/30'}`}>{createdLane.destinationIata}</span>
               </div>
 
               <div className="grid grid-cols-3 gap-2 text-[11px] text-center">
-                <div className="p-2 rounded-lg bg-slate-900/80 border border-slate-800">
-                  <div className="text-slate-500">Mode</div>
-                  <div className="font-bold text-slate-200">{createdLane.mode}</div>
+                <div className={`p-2 rounded-lg ${t.cardBg} border ${t.border}`}>
+                  <div className={t.textFaint}>Mode</div>
+                  <div className={`font-bold ${t.textSecondary}`}>{createdLane.mode}</div>
                 </div>
-                <div className="p-2 rounded-lg bg-slate-900/80 border border-slate-800">
-                  <div className="text-slate-500">Temp Range</div>
-                  <div className="font-bold text-slate-200">{createdLane.tempMin}° to {createdLane.tempMax}°C</div>
+                <div className={`p-2 rounded-lg ${t.cardBg} border ${t.border}`}>
+                  <div className={t.textFaint}>Temp Range</div>
+                  <div className={`font-bold ${t.textSecondary}`}>{createdLane.tempMin}° to {createdLane.tempMax}°C</div>
                 </div>
-                <div className={`p-2 rounded-lg border ${getRiskColor(createdLane.riskLevel).bg} ${getRiskColor(createdLane.riskLevel).border}`}>
-                  <div className="text-slate-500">Initial Risk</div>
-                  <div className={`font-bold ${getRiskColor(createdLane.riskLevel).text}`}>{createdLane.riskScore}% {createdLane.riskLevel}</div>
+                <div className={`p-2 rounded-lg border ${finishedRiskStyles.bg} ${finishedRiskStyles.border}`}>
+                  <div className={t.textFaint}>Initial Risk</div>
+                  <div className={`font-bold ${finishedRiskStyles.text}`}>{createdLane.riskScore}% {createdLane.riskLevel}</div>
                 </div>
               </div>
             </div>
@@ -541,7 +580,7 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
             <div className="flex items-center justify-center gap-2.5 pt-1">
               <button
                 onClick={onClose}
-                className="min-h-[40px] px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold transition-colors"
+                className={`min-h-[40px] px-4 py-2 rounded-lg text-xs font-semibold transition-colors ${t.chipBg} ${t.hoverBg} ${t.textSecondary}`}
               >
                 Done
               </button>
@@ -560,36 +599,40 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
         ) : (
         <>
         {/* Wizard Header */}
-        <div className="p-4 sm:p-5 bg-slate-950 border-b border-slate-800 flex items-center justify-between">
+        <div className={`p-4 sm:p-5 ${t.cardBgSunken} border-b ${t.border} flex items-center justify-between`}>
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center justify-center font-bold">
+            <div className={`w-9 h-9 rounded-xl border flex items-center justify-center font-bold ${
+              t.light ? 'bg-emerald-100 text-emerald-600 border-emerald-300' : 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
+            }`}>
               {step}
             </div>
             <div>
-              <h2 className="text-base sm:text-lg font-bold text-white">
+              <h2 className={`text-base sm:text-lg font-bold ${t.textPrimary}`}>
                 Add a New Lane
               </h2>
-              <p className="text-xs text-slate-400">
+              <p className={`text-xs ${t.textMuted}`}>
                 Pick a mode, map the route, check the risk, set alert rules
               </p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white"
+            className={`p-1.5 rounded-lg ${t.chipBg} ${t.hoverBg} ${t.textMuted} ${t.light ? 'hover:text-slate-900' : 'hover:text-white'}`}
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Step Indicator Bar */}
-        <div className="bg-slate-950/80 px-6 py-3 border-b border-slate-800 grid grid-cols-4 gap-2 text-xs">
+        <div className={`${t.cardBgSunken} px-6 py-3 border-b ${t.border} grid grid-cols-4 gap-2 text-xs`}>
           {stepLabels.map((label, i) => {
             const n = i + 1;
             return (
-              <div key={label} className={`flex items-center gap-2 ${step >= n ? 'text-emerald-400 font-bold' : 'text-slate-500'}`}>
+              <div key={label} className={`flex items-center gap-2 ${step >= n ? (t.light ? 'text-emerald-600 font-bold' : 'text-emerald-400 font-bold') : t.textFaint}`}>
                 <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] ${
-                  step >= n ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40' : 'bg-slate-800'
+                  step >= n
+                    ? t.light ? 'bg-emerald-100 text-emerald-700 border border-emerald-300' : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                    : t.chipBg
                 }`}>
                   {n}
                 </span>
@@ -600,27 +643,27 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
         </div>
 
         {/* Wizard Step Body */}
-        <div className="flex-1 overflow-y-auto p-5 sm:p-6 text-xs text-slate-200">
+        <div className={`flex-1 overflow-y-auto p-5 sm:p-6 text-xs ${t.textSecondary}`}>
 
           {/* STEP 1: Define Route & Cargo */}
           {step === 1 && (
             <div className="space-y-4">
               <div>
-                <h3 className="text-sm font-bold text-white mb-1">
+                <h3 className={`text-sm font-bold mb-1 ${t.textPrimary}`}>
                   Where is it going, and what is it?
                 </h3>
-                <p className="text-slate-400">
+                <p className={t.textMuted}>
                   Search by city, country, or IATA code — we'll fill in the rest.
                 </p>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
 
-                <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800">
+                <div className={`p-3 rounded-xl ${t.cardBgSunken} border ${t.border}`}>
                   <AirportAutocomplete label="Origin" value={origin} onChange={setOrigin} />
                 </div>
 
-                <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800">
+                <div className={`p-3 rounded-xl ${t.cardBgSunken} border ${t.border}`}>
                   <AirportAutocomplete label="Destination" value={destination} onChange={setDestination} />
                 </div>
 
@@ -632,13 +675,13 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
 
                 {origin.iata.trim() && destination.iata.trim() && (
                   <div className="sm:col-span-2 space-y-2.5">
-                    {viewMode === 'simple' && <SimpleRouteRecommendation options={computedRouteOptions} />}
+                    {viewMode === 'simple' && <SimpleRouteRecommendation options={computedRouteOptions} backupMode={backupModeInfo} />}
 
                     {viewMode === 'simple' && (
                       <button
                         type="button"
                         onClick={() => setAdvancedRoutingExpanded((v) => !v)}
-                        className="w-full flex items-center justify-between px-3 py-2 rounded-lg border border-slate-800 bg-slate-950/50 text-slate-400 hover:text-slate-200 text-xs font-semibold transition-colors"
+                        className={`w-full flex items-center justify-between px-3 py-2 rounded-lg border ${t.border} ${t.cardBgSunken} ${t.textMuted} ${t.light ? 'hover:text-slate-900' : 'hover:text-slate-200'} text-xs font-semibold transition-colors`}
                       >
                         <span>Advanced routing options</span>
                         {advancedRoutingExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
@@ -671,7 +714,7 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
                     {/* Per-leg (or unified) carrier assignment */}
                     {showAdvancedRouting && activeLegs.length > 0 && (
                       <div className="space-y-1.5">
-                        <label className="block text-[11px] font-bold text-teal-400 uppercase tracking-wider">Carrier Assignment</label>
+                        <label className={`block text-[11px] font-bold uppercase tracking-wider ${t.light ? 'text-teal-600' : 'text-teal-400'}`}>Carrier Assignment</label>
                         <LegCarrierBreakdown
                           legs={activeLegs}
                           carriers={carriers}
@@ -688,11 +731,11 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
                 )}
 
                 <div>
-                  <label className="block text-[11px] text-slate-400 mb-1">Product Type</label>
+                  <label className={`block text-[11px] mb-1 ${t.textMuted}`}>Product Type</label>
                   <select
                     value={productCategory}
                     onChange={(e) => setProductCategory(e.target.value as any)}
-                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-100"
+                    className={selectClass}
                   >
                     <option value="Vaccines">mRNA & Viral Vaccines</option>
                     <option value="Biologics">Monoclonal Antibodies & Biologics</option>
@@ -704,8 +747,8 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
                 </div>
 
                 {/* Temperature Envelope Specification */}
-                <div className="sm:col-span-2 p-3 rounded-xl bg-slate-950/80 border border-slate-800 space-y-2">
-                  <label className="block text-[11px] font-bold text-teal-400 uppercase tracking-wider">
+                <div className={`sm:col-span-2 p-3 rounded-xl ${t.cardBgSunken} border ${t.border} space-y-2`}>
+                  <label className={`block text-[11px] font-bold uppercase tracking-wider ${t.light ? 'text-teal-600' : 'text-teal-400'}`}>
                     Required Temperature Range
                   </label>
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
@@ -721,8 +764,8 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
                         onClick={() => handleRangeTypeChange(type as TemperatureRangeType)}
                         className={`p-2 rounded-lg border text-left transition-all ${
                           tempRangeType === type
-                            ? 'bg-teal-500/20 text-teal-300 border-teal-500 font-bold'
-                            : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+                            ? t.light ? 'bg-teal-100 text-teal-700 border-teal-400 font-bold' : 'bg-teal-500/20 text-teal-300 border-teal-500 font-bold'
+                            : `${t.cardBg} ${t.border} ${t.textMuted} ${t.light ? 'hover:text-slate-900' : 'hover:text-slate-200'}`
                         }`}
                       >
                         <div className="text-[11px]">{type}</div>
@@ -737,23 +780,29 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
                       <div
                         key={r.advisory.id}
                         className={`p-3 rounded-xl border ${
-                          r.advisory.severity === 'Avoid' ? 'bg-rose-950/30 border-rose-800/50' : 'bg-amber-950/25 border-amber-800/50'
+                          r.advisory.severity === 'Avoid'
+                            ? t.light ? 'bg-rose-50 border-rose-300' : 'bg-rose-950/30 border-rose-800/50'
+                            : t.light ? 'bg-amber-50 border-amber-300' : 'bg-amber-950/25 border-amber-800/50'
                         }`}
                       >
                         <div className="flex items-start gap-2">
-                          <AlertTriangle className={`w-4 h-4 flex-shrink-0 mt-0.5 ${r.advisory.severity === 'Avoid' ? 'text-rose-400' : 'text-amber-400'}`} />
+                          <AlertTriangle className={`w-4 h-4 flex-shrink-0 mt-0.5 ${
+                            r.advisory.severity === 'Avoid' ? (t.light ? 'text-rose-600' : 'text-rose-400') : (t.light ? 'text-amber-600' : 'text-amber-400')
+                          }`} />
                           <div className="min-w-0 text-[11px] leading-relaxed">
                             <div className="flex items-center gap-1.5 flex-wrap">
-                              <span className={`font-bold ${r.advisory.severity === 'Avoid' ? 'text-rose-300' : 'text-amber-300'}`}>
+                              <span className={`font-bold ${
+                                r.advisory.severity === 'Avoid' ? (t.light ? 'text-rose-700' : 'text-rose-300') : (t.light ? 'text-amber-700' : 'text-amber-300')
+                              }`}>
                                 {r.advisory.corridorName} — {r.advisory.severity}
                               </span>
-                              <span className="text-slate-500 font-mono">as of {r.advisory.asOf}</span>
+                              <span className={`font-mono ${t.textFaint}`}>as of {r.advisory.asOf}</span>
                             </div>
                             {r.isStale && (
-                              <p className="text-amber-400 font-semibold mt-1">{STALENESS_WARNING_PREFIX}</p>
+                              <p className={`font-semibold mt-1 ${t.light ? 'text-amber-700' : 'text-amber-400'}`}>{STALENESS_WARNING_PREFIX}</p>
                             )}
-                            <p className="text-slate-300 mt-1">{r.advisory.summary}</p>
-                            <p className="text-teal-300 mt-1"><strong>Recommended alternative:</strong> {r.advisory.recommendedAlternative}</p>
+                            <p className={`mt-1 ${t.textSecondary}`}>{r.advisory.summary}</p>
+                            <p className={`mt-1 ${t.light ? 'text-teal-700' : 'text-teal-300'}`}><strong>Recommended alternative:</strong> {r.advisory.recommendedAlternative}</p>
                           </div>
                         </div>
                       </div>
@@ -769,31 +818,31 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
           {step === 2 && (
             <div className="space-y-4">
               <div>
-                <h3 className="text-sm font-bold text-white mb-1">
+                <h3 className={`text-sm font-bold mb-1 ${t.textPrimary}`}>
                   How is this shipment moving?
                 </h3>
-                <p className="text-slate-400">
+                <p className={t.textMuted}>
                   This sets the baseline risk profile and which controls apply later.
                 </p>
               </div>
 
               {modeRecommendation && (
-                <div className="p-3 rounded-xl bg-teal-500/10 border border-teal-500/25 flex items-start gap-2.5">
-                  <Sparkles className="w-4 h-4 text-teal-400 flex-shrink-0 mt-0.5" />
+                <div className={`p-3 rounded-xl border flex items-start gap-2.5 ${t.light ? 'bg-teal-50 border-teal-300' : 'bg-teal-500/10 border-teal-500/25'}`}>
+                  <Sparkles className={`w-4 h-4 flex-shrink-0 mt-0.5 ${t.light ? 'text-teal-600' : 'text-teal-400'}`} />
                   <div>
-                    <div className="text-xs font-bold text-teal-300">
+                    <div className={`text-xs font-bold ${t.light ? 'text-teal-700' : 'text-teal-300'}`}>
                       Recommended: {modeRecommendation.mode}
                       {mode !== modeRecommendation.mode && (
                         <button
                           type="button"
                           onClick={() => setMode(modeRecommendation.mode)}
-                          className="ml-2 text-[10px] font-semibold text-teal-400 hover:text-teal-300 underline"
+                          className={`ml-2 text-[10px] font-semibold underline ${t.light ? 'text-teal-600 hover:text-teal-700' : 'text-teal-400 hover:text-teal-300'}`}
                         >
                           Use this
                         </button>
                       )}
                     </div>
-                    <p className="text-[11px] text-slate-400 mt-0.5">{modeRecommendation.reason}</p>
+                    <p className={`text-[11px] mt-0.5 ${t.textMuted}`}>{modeRecommendation.reason}</p>
                   </div>
                 </div>
               )}
@@ -805,21 +854,21 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
                   onClick={() => setMode('Air')}
                   className={`p-4 rounded-xl border cursor-pointer transition-all relative ${
                     mode === 'Air'
-                      ? 'bg-sky-950/40 border-sky-500 ring-1 ring-sky-500/50'
-                      : 'bg-slate-950/70 border-slate-800 hover:border-slate-700'
+                      ? t.light ? 'bg-sky-50 border-sky-400 ring-1 ring-sky-400/60' : 'bg-sky-950/40 border-sky-500 ring-1 ring-sky-500/50'
+                      : `${t.cardBgSunken} ${t.border} ${t.hoverBorder}`
                   }`}
                 >
                   {modeRecommendation?.mode === 'Air' && (
                     <span className="absolute -top-2 left-3 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-teal-500 text-slate-950">Recommended</span>
                   )}
                   <div className="flex items-center justify-between mb-2">
-                    <div className="p-2 rounded-lg bg-sky-500/20 text-sky-400">
+                    <div className={`p-2 rounded-lg ${t.light ? 'bg-sky-100 text-sky-600' : 'bg-sky-500/20 text-sky-400'}`}>
                       <Plane className="w-5 h-5" />
                     </div>
-                    {mode === 'Air' && <Check className="w-5 h-5 text-sky-400" />}
+                    {mode === 'Air' && <Check className={`w-5 h-5 ${t.light ? 'text-sky-600' : 'text-sky-400'}`} />}
                   </div>
-                  <div className="text-sm font-bold text-white mb-1">Air</div>
-                  <p className="text-slate-400 text-[11px] leading-relaxed">
+                  <div className={`text-sm font-bold mb-1 ${t.textPrimary}`}>Air</div>
+                  <p className={`text-[11px] leading-relaxed ${t.textMuted}`}>
                     Fastest option with temperature-controlled holds. Best for vaccines and biologics.
                   </p>
                 </div>
@@ -829,21 +878,21 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
                   onClick={() => setMode('Sea')}
                   className={`p-4 rounded-xl border cursor-pointer transition-all relative ${
                     mode === 'Sea'
-                      ? 'bg-blue-950/40 border-blue-500 ring-1 ring-blue-500/50'
-                      : 'bg-slate-950/70 border-slate-800 hover:border-slate-700'
+                      ? t.light ? 'bg-blue-50 border-blue-400 ring-1 ring-blue-400/60' : 'bg-blue-950/40 border-blue-500 ring-1 ring-blue-500/50'
+                      : `${t.cardBgSunken} ${t.border} ${t.hoverBorder}`
                   }`}
                 >
                   {modeRecommendation?.mode === 'Sea' && (
                     <span className="absolute -top-2 left-3 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-teal-500 text-slate-950">Recommended</span>
                   )}
                   <div className="flex items-center justify-between mb-2">
-                    <div className="p-2 rounded-lg bg-blue-500/20 text-blue-400">
+                    <div className={`p-2 rounded-lg ${t.light ? 'bg-blue-100 text-blue-600' : 'bg-blue-500/20 text-blue-400'}`}>
                       <Ship className="w-5 h-5" />
                     </div>
-                    {mode === 'Sea' && <Check className="w-5 h-5 text-blue-400" />}
+                    {mode === 'Sea' && <Check className={`w-5 h-5 ${t.light ? 'text-blue-600' : 'text-blue-400'}`} />}
                   </div>
-                  <div className="text-sm font-bold text-white mb-1">Sea</div>
-                  <p className="text-slate-400 text-[11px] leading-relaxed">
+                  <div className={`text-sm font-bold mb-1 ${t.textPrimary}`}>Sea</div>
+                  <p className={`text-[11px] leading-relaxed ${t.textMuted}`}>
                     Cost-effective for bulk cargo. Longer transit, needs reliable reefer power.
                   </p>
                 </div>
@@ -853,21 +902,21 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
                   onClick={() => setMode('Road')}
                   className={`p-4 rounded-xl border cursor-pointer transition-all relative ${
                     mode === 'Road'
-                      ? 'bg-amber-950/40 border-amber-500 ring-1 ring-amber-500/50'
-                      : 'bg-slate-950/70 border-slate-800 hover:border-slate-700'
+                      ? t.light ? 'bg-amber-50 border-amber-400 ring-1 ring-amber-400/60' : 'bg-amber-950/40 border-amber-500 ring-1 ring-amber-500/50'
+                      : `${t.cardBgSunken} ${t.border} ${t.hoverBorder}`
                   }`}
                 >
                   {modeRecommendation?.mode === 'Road' && (
                     <span className="absolute -top-2 left-3 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-teal-500 text-slate-950">Recommended</span>
                   )}
                   <div className="flex items-center justify-between mb-2">
-                    <div className="p-2 rounded-lg bg-amber-500/20 text-amber-400">
+                    <div className={`p-2 rounded-lg ${t.light ? 'bg-amber-100 text-amber-600' : 'bg-amber-500/20 text-amber-400'}`}>
                       <Truck className="w-5 h-5" />
                     </div>
-                    {mode === 'Road' && <Check className="w-5 h-5 text-amber-400" />}
+                    {mode === 'Road' && <Check className={`w-5 h-5 ${t.light ? 'text-amber-600' : 'text-amber-400'}`} />}
                   </div>
-                  <div className="text-sm font-bold text-white mb-1">Road</div>
-                  <p className="text-slate-400 text-[11px] leading-relaxed">
+                  <div className={`text-sm font-bold mb-1 ${t.textPrimary}`}>Road</div>
+                  <p className={`text-[11px] leading-relaxed ${t.textMuted}`}>
                     Direct regional delivery in dual-temperature trailers, door to door.
                   </p>
                 </div>
@@ -877,21 +926,21 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
                   onClick={() => setMode('Multimodal')}
                   className={`p-4 rounded-xl border cursor-pointer transition-all relative ${
                     mode === 'Multimodal'
-                      ? 'bg-purple-950/40 border-purple-500 ring-1 ring-purple-500/50'
-                      : 'bg-slate-950/70 border-slate-800 hover:border-slate-700'
+                      ? t.light ? 'bg-purple-50 border-purple-400 ring-1 ring-purple-400/60' : 'bg-purple-950/40 border-purple-500 ring-1 ring-purple-500/50'
+                      : `${t.cardBgSunken} ${t.border} ${t.hoverBorder}`
                   }`}
                 >
                   {modeRecommendation?.mode === 'Multimodal' && (
                     <span className="absolute -top-2 left-3 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-teal-500 text-slate-950">Recommended</span>
                   )}
                   <div className="flex items-center justify-between mb-2">
-                    <div className="p-2 rounded-lg bg-purple-500/20 text-purple-400">
+                    <div className={`p-2 rounded-lg ${t.light ? 'bg-purple-100 text-purple-600' : 'bg-purple-500/20 text-purple-400'}`}>
                       <Layers className="w-5 h-5" />
                     </div>
-                    {mode === 'Multimodal' && <Check className="w-5 h-5 text-purple-400" />}
+                    {mode === 'Multimodal' && <Check className={`w-5 h-5 ${t.light ? 'text-purple-600' : 'text-purple-400'}`} />}
                   </div>
-                  <div className="text-sm font-bold text-white mb-1">Multimodal</div>
-                  <p className="text-slate-400 text-[11px] leading-relaxed">
+                  <div className={`text-sm font-bold mb-1 ${t.textPrimary}`}>Multimodal</div>
+                  <p className={`text-[11px] leading-relaxed ${t.textMuted}`}>
                     Combines air, road, and rail. Needs continuous handoff monitoring.
                   </p>
                 </div>
@@ -904,16 +953,16 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
           {step === 3 && (
             <div className="space-y-4">
               <div>
-                <h3 className="text-sm font-bold text-white mb-1">
+                <h3 className={`text-sm font-bold mb-1 ${t.textPrimary}`}>
                   Is this route safe for this cargo?
                 </h3>
-                <p className="text-slate-400">
+                <p className={t.textMuted}>
                   We check the route against known heat and cold corridors before you provision it.
                 </p>
               </div>
 
               {!assessment ? (
-                <div className="p-4 rounded-xl bg-slate-950/70 border border-slate-800 text-slate-400 text-center">
+                <div className={`p-4 rounded-xl ${t.cardBgSunken} border ${t.border} ${t.textMuted} text-center`}>
                   Go back to Step 1 and pick an origin and destination to see the risk check.
                 </div>
               ) : (
@@ -921,34 +970,38 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
                   {/* Overall Verdict Banner */}
                   <div className={`p-4 rounded-xl border flex items-center justify-between gap-4 ${
                     assessment.verdict === 'Recommended'
-                      ? 'bg-emerald-950/30 border-emerald-800/50'
+                      ? t.light ? 'bg-emerald-50 border-emerald-300' : 'bg-emerald-950/30 border-emerald-800/50'
                       : assessment.verdict === 'Review Recommended'
-                      ? 'bg-amber-950/30 border-amber-800/50'
-                      : 'bg-rose-950/30 border-rose-800/50'
+                      ? t.light ? 'bg-amber-50 border-amber-300' : 'bg-amber-950/30 border-amber-800/50'
+                      : t.light ? 'bg-rose-50 border-rose-300' : 'bg-rose-950/30 border-rose-800/50'
                   }`}>
                     <div className="flex items-center gap-3">
                       {assessment.verdict === 'Recommended' ? (
-                        <ShieldCheck className="w-8 h-8 text-emerald-400 flex-shrink-0" />
+                        <ShieldCheck className={`w-8 h-8 flex-shrink-0 ${t.light ? 'text-emerald-600' : 'text-emerald-400'}`} />
                       ) : assessment.verdict === 'Review Recommended' ? (
-                        <ShieldAlert className="w-8 h-8 text-amber-400 flex-shrink-0" />
+                        <ShieldAlert className={`w-8 h-8 flex-shrink-0 ${t.light ? 'text-amber-600' : 'text-amber-400'}`} />
                       ) : (
-                        <AlertTriangle className="w-8 h-8 text-rose-400 flex-shrink-0" />
+                        <AlertTriangle className={`w-8 h-8 flex-shrink-0 ${t.light ? 'text-rose-600' : 'text-rose-400'}`} />
                       )}
                       <div>
                         <div className={`text-sm font-extrabold ${
-                          assessment.verdict === 'Recommended' ? 'text-emerald-300' : assessment.verdict === 'Review Recommended' ? 'text-amber-300' : 'text-rose-300'
+                          assessment.verdict === 'Recommended'
+                            ? t.light ? 'text-emerald-700' : 'text-emerald-300'
+                            : assessment.verdict === 'Review Recommended'
+                            ? t.light ? 'text-amber-700' : 'text-amber-300'
+                            : t.light ? 'text-rose-700' : 'text-rose-300'
                         }`}>
                           {assessment.verdict}
                         </div>
-                        <p className="text-[11px] text-slate-400">
-                          Route risk score: <strong className="text-slate-200">{assessment.overallScore}%</strong> ({assessment.overallLevel})
+                        <p className={`text-[11px] ${t.textMuted}`}>
+                          Route risk score: <strong className={t.textSecondary}>{assessment.overallScore}%</strong> ({assessment.overallLevel})
                         </p>
                       </div>
                     </div>
-                    <div className="w-24 bg-slate-800 h-2 rounded-full overflow-hidden flex-shrink-0">
+                    <div className={`w-24 h-2 rounded-full overflow-hidden flex-shrink-0 ${t.chipBg}`}>
                       <div
                         className="h-full rounded-full transition-all"
-                        style={{ width: `${assessment.overallScore}%`, backgroundColor: getRiskColor(assessment.overallLevel).fill }}
+                        style={{ width: `${assessment.overallScore}%`, backgroundColor: getRiskColor(assessment.overallLevel, t.light).fill }}
                       />
                     </div>
                   </div>
@@ -956,27 +1009,27 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
                   {/* Per-Leg Breakdown */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                     {assessment.legs.map((leg) => {
-                      const legStyles = getRiskColor(leg.riskScore >= 30 ? 'High' : leg.riskScore >= 15 ? 'Medium' : 'Low');
+                      const legStyles = getRiskColor(leg.riskScore >= 30 ? 'High' : leg.riskScore >= 15 ? 'Medium' : 'Low', t.light);
                       return (
                         <div key={`${leg.label}-${leg.iata}`} className={`p-3 rounded-xl border ${legStyles.bg} ${legStyles.border}`}>
                           <div className="flex items-center justify-between mb-1.5">
-                            <span className="text-xs font-bold text-slate-200">{leg.label} • {leg.iata}</span>
+                            <span className={`text-xs font-bold ${t.textSecondary}`}>{leg.label} • {leg.iata}</span>
                             <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${legStyles.badge}`}>
                               {leg.riskScore}%
                             </span>
                           </div>
                           {leg.flags.length === 0 ? (
-                            <p className="text-[11px] text-slate-400">No known thermal-hotspot conflicts.</p>
+                            <p className={`text-[11px] ${t.textMuted}`}>No known thermal-hotspot conflicts.</p>
                           ) : (
                             leg.flags.map((f, i) => (
-                              <p key={i} className="text-[11px] text-slate-300 leading-relaxed mb-1">{f}</p>
+                              <p key={i} className={`text-[11px] leading-relaxed mb-1 ${t.textSecondary}`}>{f}</p>
                             ))
                           )}
                           {leg.label.startsWith('Stop') && (
                             <button
                               type="button"
                               onClick={() => setStops((prev) => prev.filter((s) => s.iata.toUpperCase() !== leg.iata))}
-                              className="mt-1.5 text-[11px] font-semibold text-rose-300 hover:text-rose-200 flex items-center gap-1"
+                              className={`mt-1.5 text-[11px] font-semibold flex items-center gap-1 ${t.light ? 'text-rose-600 hover:text-rose-700' : 'text-rose-300 hover:text-rose-200'}`}
                             >
                               <Trash2 className="w-3 h-3" /> Remove this stop
                             </button>
@@ -987,14 +1040,14 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
                   </div>
 
                   {/* Recommendations */}
-                  <div className="p-3.5 rounded-xl bg-slate-950/80 border border-slate-800">
-                    <div className="text-[11px] font-bold text-teal-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                  <div className={`p-3.5 rounded-xl ${t.cardBgSunken} border ${t.border}`}>
+                    <div className={`text-[11px] font-bold uppercase tracking-wider mb-2 flex items-center gap-1.5 ${t.light ? 'text-teal-600' : 'text-teal-400'}`}>
                       <Sparkles className="w-3.5 h-3.5" /> What we'd suggest
                     </div>
                     <ul className="space-y-1.5">
                       {assessment.recommendations.map((r, i) => (
-                        <li key={i} className="text-[11px] text-slate-300 leading-relaxed flex items-start gap-1.5">
-                          <span className="text-teal-400 mt-0.5">•</span>
+                        <li key={i} className={`text-[11px] leading-relaxed flex items-start gap-1.5 ${t.textSecondary}`}>
+                          <span className={`mt-0.5 ${t.light ? 'text-teal-600' : 'text-teal-400'}`}>•</span>
                           <span>{r}</span>
                         </li>
                       ))}
@@ -1009,10 +1062,10 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
           {step === 4 && (
             <div className="space-y-4">
               <div>
-                <h3 className="text-sm font-bold text-white mb-1">
+                <h3 className={`text-sm font-bold mb-1 ${t.textPrimary}`}>
                   When should we alert you?
                 </h3>
-                <p className="text-slate-400">
+                <p className={t.textMuted}>
                   Set the temperature, delay, and shock limits that trigger an automatic alert.
                 </p>
               </div>
@@ -1020,12 +1073,12 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
 
                 {/* Max Temp Excursion Time */}
-                <div className="p-3.5 bg-slate-950/70 border border-slate-800 rounded-xl">
+                <div className={`p-3.5 ${t.cardBgSunken} border ${t.border} rounded-xl`}>
                   <div className="flex items-center justify-between mb-1">
-                    <label className="font-semibold text-slate-200">Max Excursion Duration</label>
-                    <span className="font-mono font-bold text-emerald-400">{maxExcursionMinutes} mins</span>
+                    <label className={`font-semibold ${t.textSecondary}`}>Max Excursion Duration</label>
+                    <span className={`font-mono font-bold ${t.light ? 'text-emerald-600' : 'text-emerald-400'}`}>{maxExcursionMinutes} mins</span>
                   </div>
-                  <p className="text-[11px] text-slate-400 mb-2">
+                  <p className={`text-[11px] mb-2 ${t.textMuted}`}>
                     Alert if temp stays outside range longer than this.
                   </p>
                   <input
@@ -1040,12 +1093,12 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
                 </div>
 
                 {/* Warning Tolerance */}
-                <div className="p-3.5 bg-slate-950/70 border border-slate-800 rounded-xl">
+                <div className={`p-3.5 ${t.cardBgSunken} border ${t.border} rounded-xl`}>
                   <div className="flex items-center justify-between mb-1">
-                    <label className="font-semibold text-slate-200">Early Warning Buffer</label>
-                    <span className="font-mono font-bold text-amber-400">±{warningTolerance}°C</span>
+                    <label className={`font-semibold ${t.textSecondary}`}>Early Warning Buffer</label>
+                    <span className={`font-mono font-bold ${t.light ? 'text-amber-600' : 'text-amber-400'}`}>±{warningTolerance}°C</span>
                   </div>
-                  <p className="text-[11px] text-slate-400 mb-2">
+                  <p className={`text-[11px] mb-2 ${t.textMuted}`}>
                     Warn before the payload actually reaches its limit.
                   </p>
                   <input
@@ -1060,12 +1113,12 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
                 </div>
 
                 {/* Delay Tolerance */}
-                <div className="p-3.5 bg-slate-950/70 border border-slate-800 rounded-xl">
+                <div className={`p-3.5 ${t.cardBgSunken} border ${t.border} rounded-xl`}>
                   <div className="flex items-center justify-between mb-1">
-                    <label className="font-semibold text-slate-200">Max Allowed Delay</label>
-                    <span className="font-mono font-bold text-slate-200">{maxAllowedDelay} hrs</span>
+                    <label className={`font-semibold ${t.textSecondary}`}>Max Allowed Delay</label>
+                    <span className={`font-mono font-bold ${t.textSecondary}`}>{maxAllowedDelay} hrs</span>
                   </div>
-                  <p className="text-[11px] text-slate-400 mb-2">
+                  <p className={`text-[11px] mb-2 ${t.textMuted}`}>
                     Flag the lane as at-risk if it runs later than this.
                   </p>
                   <input
@@ -1080,12 +1133,12 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
                 </div>
 
                 {/* Shock & Handling Limit */}
-                <div className="p-3.5 bg-slate-950/70 border border-slate-800 rounded-xl">
+                <div className={`p-3.5 ${t.cardBgSunken} border ${t.border} rounded-xl`}>
                   <div className="flex items-center justify-between mb-1">
-                    <label className="font-semibold text-slate-200">Shock Limit</label>
-                    <span className="font-mono font-bold text-purple-400">{maxShockG} G</span>
+                    <label className={`font-semibold ${t.textSecondary}`}>Shock Limit</label>
+                    <span className={`font-mono font-bold ${t.light ? 'text-purple-600' : 'text-purple-400'}`}>{maxShockG} G</span>
                   </div>
-                  <p className="text-[11px] text-slate-400 mb-2">
+                  <p className={`text-[11px] mb-2 ${t.textMuted}`}>
                     Flag a drop or rough-handling incident above this.
                   </p>
                   <input
@@ -1102,10 +1155,10 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
               </div>
 
               {/* Notification Checkboxes */}
-              <div className="p-3.5 bg-slate-950 border border-slate-800 rounded-xl flex items-center justify-between">
+              <div className={`p-3.5 ${t.cardBgSunken} border ${t.border} rounded-xl flex items-center justify-between`}>
                 <div>
-                  <div className="font-bold text-slate-200">Who gets notified</div>
-                  <div className="text-slate-400 text-[11px]">Sent to the on-duty QA & Logistics team</div>
+                  <div className={`font-bold ${t.textSecondary}`}>Who gets notified</div>
+                  <div className={`text-[11px] ${t.textMuted}`}>Sent to the on-duty QA & Logistics team</div>
                 </div>
                 <div className="flex items-center gap-4">
                   <label className="flex items-center gap-1.5 cursor-pointer">
@@ -1115,7 +1168,7 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
                       onChange={(e) => setEmailAlerts(e.target.checked)}
                       className="accent-emerald-500 rounded"
                     />
-                    <span>Email</span>
+                    <span className={t.textSecondary}>Email</span>
                   </label>
                   <label className="flex items-center gap-1.5 cursor-pointer">
                     <input
@@ -1124,7 +1177,7 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
                       onChange={(e) => setSmsAlerts(e.target.checked)}
                       className="accent-emerald-500 rounded"
                     />
-                    <span>SMS (urgent only)</span>
+                    <span className={t.textSecondary}>SMS (urgent only)</span>
                   </label>
                 </div>
               </div>
@@ -1134,11 +1187,11 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
         </div>
 
         {/* Wizard Controls Footer */}
-        <div className="p-4 bg-slate-950 border-t border-slate-800 flex items-center justify-between">
+        <div className={`p-4 ${t.cardBgSunken} border-t ${t.border} flex items-center justify-between`}>
           {step > 1 ? (
             <button
               onClick={() => setStep((step - 1) as any)}
-              className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold"
+              className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-semibold ${t.chipBg} ${t.hoverBg} ${t.textSecondary}`}
             >
               <ArrowLeft className="w-4 h-4" />
               <span>Back</span>
@@ -1146,7 +1199,7 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
           ) : (
             <button
               onClick={onClose}
-              className="px-3.5 py-2 rounded-lg bg-slate-800 text-slate-400 hover:text-white text-xs"
+              className={`px-3.5 py-2 rounded-lg text-xs ${t.chipBg} ${t.textMuted} ${t.light ? 'hover:text-slate-900' : 'hover:text-white'}`}
             >
               Cancel
             </button>
@@ -1164,7 +1217,7 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
           ) : (
             <div className="flex items-center gap-2">
               {anyLegCertBlocked && (
-                <span className="text-[11px] text-rose-300 font-semibold">Upload &amp; verify the missing certification(s) to continue.</span>
+                <span className={`text-[11px] font-semibold ${t.light ? 'text-rose-600' : 'text-rose-300'}`}>Upload &amp; verify the missing certification(s) to continue.</span>
               )}
               <button
                 onClick={handleCreateLaneClick}

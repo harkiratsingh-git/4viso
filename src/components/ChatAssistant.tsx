@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Bot, Send, X, Sparkles, FileDown, ArrowUpRight, AlertTriangle, Loader2, User as UserIcon } from 'lucide-react';
+import { Bot, Send, X, Sparkles, FileDown, ArrowUpRight, AlertTriangle, Loader2 } from 'lucide-react';
 import { SupabaseUser, UserRole } from '../types';
 import { sendAssistantMessage, AssistantMessage, AssistantStructuredResult } from '../services/assistantService';
+import { useThemeTokens, ThemeTokens } from '../contexts/ViewModeContext';
 
 interface ChatAssistantProps {
   isOpen: boolean;
@@ -26,23 +27,23 @@ const SUGGESTED_PROMPTS = [
   'Generate a summary report of everything',
 ];
 
-function StructuredResultCard({ item, onLaneCreated }: { item: AssistantStructuredResult; onLaneCreated: (laneCode: string) => void }) {
+function StructuredResultCard({ item, onLaneCreated, t }: { item: AssistantStructuredResult; onLaneCreated: (laneCode: string) => void; t: ThemeTokens }) {
   if (item.tool === 'create_lane' && item.result?.created) {
     const r = item.result;
     return (
-      <div className="mt-2 p-3 rounded-xl bg-emerald-950/30 border border-emerald-800/50 text-xs">
-        <div className="flex items-center gap-1.5 font-bold text-emerald-300 mb-1.5">
+      <div className={`mt-2 p-3 rounded-xl border text-xs ${t.light ? 'bg-emerald-50 border-emerald-300' : 'bg-emerald-950/30 border-emerald-800/50'}`}>
+        <div className={`flex items-center gap-1.5 font-bold mb-1.5 ${t.light ? 'text-emerald-700' : 'text-emerald-300'}`}>
           <Sparkles className="w-3.5 h-3.5" /> Lane Created: {r.lane_code}
         </div>
-        <div className="grid grid-cols-2 gap-1.5 text-slate-300">
-          <div><span className="text-slate-500">Route: </span>{r.origin} → {r.destination}</div>
-          <div><span className="text-slate-500">Mode: </span>{r.mode}</div>
-          <div><span className="text-slate-500">Carrier: </span>{r.carrier}</div>
-          <div><span className="text-slate-500">Risk: </span>{r.risk_score}% {r.risk_level}</div>
+        <div className={`grid grid-cols-2 gap-1.5 ${t.textSecondary}`}>
+          <div><span className={t.textFaint}>Route: </span>{r.origin} → {r.destination}</div>
+          <div><span className={t.textFaint}>Mode: </span>{r.mode}</div>
+          <div><span className={t.textFaint}>Carrier: </span>{r.carrier}</div>
+          <div><span className={t.textFaint}>Risk: </span>{r.risk_score}% {r.risk_level}</div>
         </div>
         <button
           onClick={() => onLaneCreated(r.lane_code)}
-          className="mt-2 flex items-center gap-1 text-[11px] font-semibold text-emerald-400 hover:text-emerald-300"
+          className={`mt-2 flex items-center gap-1 text-[11px] font-semibold ${t.light ? 'text-emerald-600 hover:text-emerald-700' : 'text-emerald-400 hover:text-emerald-300'}`}
         >
           View Lane <ArrowUpRight className="w-3 h-3" />
         </button>
@@ -53,26 +54,30 @@ function StructuredResultCard({ item, onLaneCreated }: { item: AssistantStructur
   if (item.tool === 'generate_summary_report' && item.result?.generated) {
     const r = item.result;
     return (
-      <div className="mt-2 p-3 rounded-xl bg-teal-950/30 border border-teal-800/50 text-xs">
-        <div className="flex items-center gap-1.5 font-bold text-teal-300 mb-1.5">
+      <div className={`mt-2 p-3 rounded-xl border text-xs ${t.light ? 'bg-teal-50 border-teal-300' : 'bg-teal-950/30 border-teal-800/50'}`}>
+        <div className={`flex items-center gap-1.5 font-bold mb-1.5 ${t.light ? 'text-teal-700' : 'text-teal-300'}`}>
           <FileDown className="w-3.5 h-3.5" /> Report Ready
         </div>
         <a
           href={r.download_url}
           target="_blank"
           rel="noopener noreferrer"
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-teal-500/15 hover:bg-teal-500/25 border border-teal-500/30 text-teal-300 font-semibold w-fit"
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border font-semibold w-fit ${
+            t.light ? 'bg-teal-100 hover:bg-teal-200 border-teal-300 text-teal-700' : 'bg-teal-500/15 hover:bg-teal-500/25 border-teal-500/30 text-teal-300'
+          }`}
         >
           <FileDown className="w-3.5 h-3.5" /> Download {r.filename}
         </a>
-        <p className="text-slate-500 mt-1.5">Link expires in {r.expires_in_hours}h.</p>
+        <p className={`mt-1.5 ${t.textFaint}`}>Link expires in {r.expires_in_hours}h.</p>
       </div>
     );
   }
 
   if (item.result?.error) {
     return (
-      <div className="mt-2 p-2.5 rounded-lg bg-rose-950/30 border border-rose-800/50 text-[11px] text-rose-300 flex items-start gap-1.5">
+      <div className={`mt-2 p-2.5 rounded-lg border text-[11px] flex items-start gap-1.5 ${
+        t.light ? 'bg-rose-50 border-rose-300 text-rose-700' : 'bg-rose-950/30 border-rose-800/50 text-rose-300'
+      }`}>
         <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
         <span>{item.result.error}</span>
       </div>
@@ -88,6 +93,7 @@ function StructuredResultCard({ item, onLaneCreated }: { item: AssistantStructur
  * tool-calling against live data; this component only renders the conversation.
  */
 export const ChatAssistant: React.FC<ChatAssistantProps> = ({ isOpen, onClose, currentUser, activeRole, dataSource, onLaneCreated }) => {
+  const t = useThemeTokens();
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [input, setInput] = useState('');
   const [isSending, setIsSending] = useState(false);
@@ -139,26 +145,26 @@ export const ChatAssistant: React.FC<ChatAssistantProps> = ({ isOpen, onClose, c
 
   return (
     <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-stretch justify-end">
-      <div className="bg-slate-900 border-l border-slate-700 w-full max-w-md h-full flex flex-col shadow-2xl animate-in slide-in-from-right duration-200">
+      <div className={`${t.cardBg} border-l ${t.light ? 'border-slate-300' : 'border-slate-700'} w-full max-w-md h-full flex flex-col shadow-2xl animate-in slide-in-from-right duration-200`}>
         {/* Header */}
-        <div className="p-4 bg-slate-950 border-b border-slate-800 flex items-center justify-between flex-shrink-0">
+        <div className={`p-4 ${t.cardBgSunken} border-b ${t.border} flex items-center justify-between flex-shrink-0`}>
           <div className="flex items-center gap-2.5">
-            <div className="p-2 rounded-xl bg-teal-500/15 text-teal-400 border border-teal-500/30">
+            <div className={`p-2 rounded-xl border ${t.light ? 'bg-teal-100 text-teal-600 border-teal-300' : 'bg-teal-500/15 text-teal-400 border-teal-500/30'}`}>
               <Bot className="w-4 h-4" />
             </div>
             <div>
-              <h2 className="text-sm font-bold text-white">PharmaTrack Assistant</h2>
-              <p className="text-[11px] text-slate-400">Ask about lanes, get recommendations, generate reports</p>
+              <h2 className={`text-sm font-bold ${t.textPrimary}`}>PharmaTrack Assistant</h2>
+              <p className={`text-[11px] ${t.textMuted}`}>Ask about lanes, get recommendations, generate reports</p>
             </div>
           </div>
-          <button onClick={onClose} className="min-w-[40px] min-h-[40px] flex items-center justify-center rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white">
+          <button onClick={onClose} className={`min-w-[40px] min-h-[40px] flex items-center justify-center rounded-lg ${t.chipBg} ${t.hoverBg} ${t.textMuted} ${t.light ? 'hover:text-slate-900' : 'hover:text-white'}`}>
             <X className="w-5 h-5" />
           </button>
         </div>
 
         {notConnected && (
-          <div className="mx-4 mt-3 p-2.5 rounded-lg bg-slate-950 border border-slate-800 text-[11px] text-slate-400 flex items-start gap-2 flex-shrink-0">
-            <AlertTriangle className="w-3.5 h-3.5 text-amber-400 flex-shrink-0 mt-0.5" />
+          <div className={`mx-4 mt-3 p-2.5 rounded-lg text-[11px] flex items-start gap-2 flex-shrink-0 ${t.cardBgSunken} border ${t.border} ${t.textMuted}`}>
+            <AlertTriangle className={`w-3.5 h-3.5 flex-shrink-0 mt-0.5 ${t.light ? 'text-amber-600' : 'text-amber-400'}`} />
             <span>The assistant only works when connected to Supabase Cloud — currently running on the local demo dataset.</span>
           </div>
         )}
@@ -167,13 +173,15 @@ export const ChatAssistant: React.FC<ChatAssistantProps> = ({ isOpen, onClose, c
         <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-3 text-xs">
           {turns.length === 0 && (
             <div className="space-y-3">
-              <p className="text-slate-500 text-center py-2">Try asking:</p>
+              <p className={`text-center py-2 ${t.textFaint}`}>Try asking:</p>
               {SUGGESTED_PROMPTS.map((p) => (
                 <button
                   key={p}
                   onClick={() => handleSend(p)}
                   disabled={notConnected}
-                  className="w-full text-left px-3 py-2 rounded-lg bg-slate-950/80 border border-slate-800 hover:border-teal-500/40 text-slate-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                  className={`w-full text-left px-3 py-2 rounded-lg border transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+                    t.light ? 'bg-slate-50 border-slate-200 hover:border-teal-400 text-slate-700' : 'bg-slate-950/80 border-slate-800 hover:border-teal-500/40 text-slate-300'
+                  }`}
                 >
                   {p}
                 </button>
@@ -189,14 +197,14 @@ export const ChatAssistant: React.FC<ChatAssistantProps> = ({ isOpen, onClose, c
                     turn.role === 'user'
                       ? 'bg-emerald-600 text-white'
                       : turn.isError
-                      ? 'bg-rose-950/30 border border-rose-800/50 text-rose-200'
-                      : 'bg-slate-800 text-slate-200'
+                      ? t.light ? 'bg-rose-50 border border-rose-300 text-rose-700' : 'bg-rose-950/30 border border-rose-800/50 text-rose-200'
+                      : `${t.chipBg} ${t.textSecondary}`
                   }`}
                 >
                   {turn.content}
                 </div>
                 {turn.structured?.map((item, j) => (
-                  <StructuredResultCard key={j} item={item} onLaneCreated={onLaneCreated} />
+                  <StructuredResultCard key={j} item={item} onLaneCreated={onLaneCreated} t={t} />
                 ))}
               </div>
             </div>
@@ -204,7 +212,7 @@ export const ChatAssistant: React.FC<ChatAssistantProps> = ({ isOpen, onClose, c
 
           {isSending && (
             <div className="flex justify-start">
-              <div className="px-3 py-2 rounded-xl bg-slate-800 text-slate-400 flex items-center gap-1.5">
+              <div className={`px-3 py-2 rounded-xl flex items-center gap-1.5 ${t.chipBg} ${t.textMuted}`}>
                 <Loader2 className="w-3.5 h-3.5 animate-spin" /> Thinking…
               </div>
             </div>
@@ -212,7 +220,7 @@ export const ChatAssistant: React.FC<ChatAssistantProps> = ({ isOpen, onClose, c
         </div>
 
         {/* Input */}
-        <div className="p-3 bg-slate-950 border-t border-slate-800 flex items-end gap-2 flex-shrink-0">
+        <div className={`p-3 ${t.cardBgSunken} border-t ${t.border} flex items-end gap-2 flex-shrink-0`}>
           <textarea
             ref={inputRef}
             value={input}
@@ -226,7 +234,7 @@ export const ChatAssistant: React.FC<ChatAssistantProps> = ({ isOpen, onClose, c
             placeholder={notConnected ? 'Connect to Supabase Cloud to use the assistant…' : 'Ask about a lane, request a recommendation, or generate a report…'}
             disabled={notConnected}
             rows={1}
-            className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 text-xs resize-none focus:outline-none focus:border-teal-500 disabled:opacity-50"
+            className={`flex-1 ${t.cardBg} border ${t.light ? 'border-slate-300' : 'border-slate-700'} rounded-lg px-3 py-2 ${t.textPrimary} text-xs resize-none focus:outline-none focus:border-teal-500 disabled:opacity-50`}
           />
           <button
             onClick={() => handleSend()}

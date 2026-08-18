@@ -11,6 +11,7 @@ import {
   CheckCircle2,
 } from 'lucide-react';
 import { WeatherDisruption } from '../types';
+import { useThemeTokens } from '../contexts/ViewModeContext';
 
 interface WeatherDisruptionsProps {
   disruptions: WeatherDisruption[];
@@ -23,42 +24,44 @@ export const WeatherDisruptions: React.FC<WeatherDisruptionsProps> = ({
   selectedLaneCode,
   onFilterByLaneCode,
 }) => {
+  const t = useThemeTokens();
+
   const getDisruptionIcon = (type: WeatherDisruption['type']) => {
     switch (type) {
       case 'Severe Storm':
-        return <CloudLightning className="w-4 h-4 text-rose-400" />;
+        return <CloudLightning className={`w-4 h-4 ${t.light ? 'text-rose-500' : 'text-rose-400'}`} />;
       case 'Port Congestion':
-        return <Anchor className="w-4 h-4 text-amber-400" />;
+        return <Anchor className={`w-4 h-4 ${t.light ? 'text-amber-500' : 'text-amber-400'}`} />;
       case 'Heatwave Warning':
-        return <SunMedium className="w-4 h-4 text-orange-400" />;
+        return <SunMedium className={`w-4 h-4 ${t.light ? 'text-orange-500' : 'text-orange-400'}`} />;
       case 'Low Visibility':
-        return <Wind className="w-4 h-4 text-sky-400" />;
+        return <Wind className={`w-4 h-4 ${t.light ? 'text-sky-500' : 'text-sky-400'}`} />;
       case 'Corridor Advisory':
-        return <RouteIcon className="w-4 h-4 text-teal-400" />;
+        return <RouteIcon className={`w-4 h-4 ${t.light ? 'text-teal-500' : 'text-teal-400'}`} />;
       default:
-        return <AlertCircle className="w-4 h-4 text-amber-400" />;
+        return <AlertCircle className={`w-4 h-4 ${t.light ? 'text-amber-500' : 'text-amber-400'}`} />;
     }
   };
 
   return (
-    <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-4 shadow-lg mb-6">
-      <div className="flex items-center justify-between border-b border-slate-800 pb-3 mb-3">
+    <div className={`${t.cardBg} border ${t.border} rounded-xl p-4 shadow-lg mb-6`}>
+      <div className={`flex items-center justify-between border-b ${t.border} pb-3 mb-3`}>
         <div className="flex items-center gap-2">
-          <div className="p-1.5 rounded-lg bg-amber-500/10 text-amber-400">
+          <div className={`p-1.5 rounded-lg ${t.light ? 'bg-amber-100 text-amber-600' : 'bg-amber-500/10 text-amber-400'}`}>
             <CloudLightning className="w-5 h-5" />
           </div>
           <div>
-            <h3 className="text-sm font-bold text-slate-100 flex items-center gap-2">
+            <h3 className={`text-sm font-bold ${t.textPrimary} flex items-center gap-2`}>
               Weather & Route Disruption Feed
               <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${
                 disruptions.length > 0
-                  ? 'bg-rose-500/20 text-rose-300 border-rose-500/30'
-                  : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                  ? t.light ? 'bg-rose-100 text-rose-700 border-rose-300' : 'bg-rose-500/20 text-rose-300 border-rose-500/30'
+                  : t.light ? 'bg-emerald-100 text-emerald-700 border-emerald-300' : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
               }`}>
                 {disruptions.length} Active Alerts
               </span>
             </h3>
-            <p className="text-xs text-slate-400">
+            <p className={`text-xs ${t.textMuted}`}>
               Automated geopolitical, environmental & port congestion flags mapped to lane IDs
             </p>
           </div>
@@ -66,8 +69,8 @@ export const WeatherDisruptions: React.FC<WeatherDisruptionsProps> = ({
       </div>
 
       {disruptions.length === 0 ? (
-        <div className="flex items-center gap-2 py-4 text-slate-400 text-xs">
-          <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+        <div className={`flex items-center gap-2 py-4 text-xs ${t.textMuted}`}>
+          <CheckCircle2 className={`w-4 h-4 flex-shrink-0 ${t.light ? 'text-emerald-500' : 'text-emerald-400'}`} />
           <span>No corridor advisories currently affect any active lane's route.</span>
         </div>
       ) : (
@@ -80,39 +83,45 @@ export const WeatherDisruptions: React.FC<WeatherDisruptionsProps> = ({
               key={item.id}
               className={`p-3 rounded-lg border transition-all flex flex-col justify-between ${
                 item.severity === 'Critical'
-                  ? 'bg-rose-950/20 border-rose-800/40 hover:border-rose-700'
-                  : 'bg-slate-950/60 border-slate-800 hover:border-slate-700'
+                  ? t.light ? 'bg-rose-50 border-rose-200 hover:border-rose-300' : 'bg-rose-950/20 border-rose-800/40 hover:border-rose-700'
+                  : `${t.cardBgSunken} ${t.border} ${t.hoverBorder}`
               } ${isSelected ? 'ring-1 ring-emerald-500' : ''}`}
             >
               <div>
                 <div className="flex items-center justify-between mb-1.5">
                   <div className="flex items-center gap-1.5">
                     {getDisruptionIcon(item.type)}
-                    <span className="text-xs font-bold text-slate-200">{item.region}</span>
+                    <span className={`text-xs font-bold ${t.light ? 'text-slate-800' : 'text-slate-200'}`}>{item.region}</span>
                   </div>
                   <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
-                    item.severity === 'Critical' ? 'bg-rose-500/20 text-rose-300' : 'bg-amber-500/20 text-amber-300'
+                    item.severity === 'Critical'
+                      ? t.light ? 'bg-rose-100 text-rose-700' : 'bg-rose-500/20 text-rose-300'
+                      : t.light ? 'bg-amber-100 text-amber-700' : 'bg-amber-500/20 text-amber-300'
                   }`}>
                     {item.severity}
                   </span>
                 </div>
 
-                <p className="text-xs text-slate-300 line-clamp-2 mb-2 leading-relaxed">
+                <p className={`text-xs line-clamp-2 mb-2 leading-relaxed ${t.textSecondary}`}>
                   {item.impactDescription}
                 </p>
               </div>
 
-              <div className="border-t border-slate-800/80 pt-2 flex items-center justify-between text-[11px]">
-                <span className="text-amber-400 font-semibold flex items-center gap-1">
+              <div className={`border-t pt-2 flex items-center justify-between text-[11px] ${t.borderSubtle}`}>
+                <span className={`font-semibold flex items-center gap-1 ${t.light ? 'text-amber-600' : 'text-amber-400'}`}>
                   <Clock className="w-3 h-3" /> {item.delayEstimated}
                 </span>
-                
+
                 <div className="flex items-center gap-1 flex-wrap">
                   {item.affectedLaneCodes.map(code => (
                     <button
                       key={code}
                       onClick={() => onFilterByLaneCode(code)}
-                      className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-teal-300 hover:text-teal-200 text-[10px] font-mono font-semibold transition-colors border border-slate-700"
+                      className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold transition-colors border ${
+                        t.light
+                          ? 'bg-slate-100 hover:bg-slate-200 text-teal-700 hover:text-teal-800 border-slate-200'
+                          : 'bg-slate-800 hover:bg-slate-700 text-teal-300 hover:text-teal-200 border-slate-700'
+                      }`}
                       title={`Filter to lane ${code}`}
                     >
                       {code}

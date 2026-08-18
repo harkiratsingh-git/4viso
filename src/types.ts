@@ -114,6 +114,42 @@ export interface CarrierCertification {
   uploadedAt: string;
   status: 'Pending Review' | 'Verified' | 'Rejected' | 'Expired';
   expiryDate: string | null;
+  /** When a Quality Lead/GDP Auditor actually verified this document — distinct from uploadedAt,
+   *  since "verified on" is the trustworthy date to surface (uploadedAt only proves someone
+   *  submitted it, not that it was checked). Null until reviewed. */
+  reviewedAt: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// Phase 4: emergency mid-transit disruption handling
+// ---------------------------------------------------------------------------
+
+export interface LaneDisruption {
+  id: string;
+  laneId: string;
+  legId: string;
+  disruptionType: 'Carrier Incapacitated' | 'Missing Documentation' | 'Customs Detention' | 'Other';
+  description: string;
+  reportedAt: string;
+  reportedBy: string | null;
+  status: 'Reported' | 'Resolved - Carrier Replaced' | 'Resolved - Contract Extended' | 'Resolved - Other';
+  resolutionCarrierId: string | null;
+  resolutionNotes: string | null;
+  resolvedAt: string | null;
+  resolvedBy: string | null;
+  capaId: string | null;
+}
+
+export interface TransferDocument {
+  id: string;
+  disruptionId: string;
+  legId: string;
+  documentType: 'Customs Clearance' | 'Legal Transfer Authorization' | 'Carrier Handover' | 'Other';
+  storagePath: string;
+  originalFilename: string;
+  uploadedBy: string | null;
+  uploadedAt: string;
+  notes: string | null;
 }
 
 export interface RouteStop {
@@ -209,7 +245,7 @@ export interface AlertNotification {
   laneCode: string;
   route: string;
   timestamp: string;
-  type: 'TEMPERATURE_EXCURSION' | 'TRANSIT_DELAY' | 'CUSTOMS_HOLD' | 'WEATHER_DISRUPTION' | 'GDP_BREACH' | 'SHOCK_IMPACT';
+  type: 'TEMPERATURE_EXCURSION' | 'TRANSIT_DELAY' | 'CUSTOMS_HOLD' | 'WEATHER_DISRUPTION' | 'GDP_BREACH' | 'SHOCK_IMPACT' | 'CARRIER_DISRUPTION';
   severity: 'Critical' | 'Warning' | 'Info';
   title: string;
   message: string;

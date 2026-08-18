@@ -27,6 +27,7 @@ import { REGIONAL_THERMAL_HOTSPOTS, getThermalRiskColor } from '../data/temperat
 import { isLaneExcursing } from '../utils/laneRisk';
 import { haversineKm } from '../utils/geoMath';
 import { HOTSPOT_INFLUENCE_RADIUS_KM } from '../utils/riskAssessment';
+import { useThemeTokens } from '../contexts/ViewModeContext';
 
 const geoUrl = 'https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json';
 
@@ -88,9 +89,14 @@ export const RegionalTemperatureHeatmapView: React.FC<RegionalTemperatureHeatmap
     return true;
   });
 
+  const t = useThemeTokens();
+
   return (
     <div className="space-y-4">
-      {/* Primary Interactive Heatmap Display */}
+      {/* Primary Interactive Heatmap Display — the canvas itself stays dark in both themes,
+          deliberately: the glowing radial-gradient heat blobs are designed to read against a
+          dark backdrop (like most thermal/heat visualizations), not the app's slate/white
+          scaffolding, so only the floating UI on top of it is themed. */}
       <div className="relative w-full aspect-[2/1] min-h-[340px] max-h-[480px] bg-slate-950 rounded-xl border border-slate-800 overflow-hidden">
         
         <ComposableMap projectionConfig={{ scale: 145 }} style={{ width: '100%', height: '100%' }}>
@@ -263,6 +269,9 @@ export const RegionalTemperatureHeatmapView: React.FC<RegionalTemperatureHeatmap
         {/* Single Floating Summary Card — route/excursion counts + a gear icon that reveals the
             detailed hazard filters, replacing what used to be a permanently-visible filter bar
             above the map. */}
+        {/* This floating UI sits on top of the deliberately-dark map canvas above, so it stays
+            dark regardless of theme too — a light popover on a dark map would be its own
+            jarring mismatch, the same class of bug as the rest of this pass is fixing. */}
         <div ref={popoverRef} className="absolute bottom-3 right-3 z-20">
           {showFilterPopover && (
             <div className="absolute bottom-full right-0 mb-2 w-72 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl p-3 text-xs space-y-3 animate-in fade-in zoom-in-95 duration-100">
@@ -372,15 +381,15 @@ export const RegionalTemperatureHeatmapView: React.FC<RegionalTemperatureHeatmap
 
       {/* Selected Hotspot Detailed Telemetry & Risk Mitigation Card */}
       {selectedHotspot && (
-        <div className="bg-slate-900/95 border border-slate-800 rounded-xl p-4 shadow-lg">
-          <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-3 border-b border-slate-800 pb-3 mb-3">
+        <div className={`${t.cardBg} border ${t.border} rounded-xl p-4 shadow-lg`}>
+          <div className={`flex flex-col lg:flex-row items-start lg:items-center justify-between gap-3 border-b ${t.border} pb-3 mb-3`}>
             <div className="flex items-center gap-3">
-              <div className={`p-2.5 rounded-xl ${
+              <div className={`p-2.5 rounded-xl border ${
                 selectedHotspot.thermalRiskLevel === 'Extreme Heat'
-                  ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
+                  ? t.light ? 'bg-rose-100 text-rose-600 border-rose-300' : 'bg-rose-500/20 text-rose-400 border-rose-500/30'
                   : selectedHotspot.thermalRiskLevel === 'Sub-Zero Freeze'
-                    ? 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/30'
-                    : 'bg-orange-500/20 text-orange-400 border border-orange-500/30'
+                    ? t.light ? 'bg-indigo-100 text-indigo-600 border-indigo-300' : 'bg-indigo-500/20 text-indigo-400 border-indigo-500/30'
+                    : t.light ? 'bg-orange-100 text-orange-600 border-orange-300' : 'bg-orange-500/20 text-orange-400 border-orange-500/30'
               }`}>
                 {selectedHotspot.thermalRiskLevel === 'Sub-Zero Freeze' ? (
                   <Snowflake className="w-6 h-6" />
@@ -390,66 +399,66 @@ export const RegionalTemperatureHeatmapView: React.FC<RegionalTemperatureHeatmap
               </div>
               <div>
                 <div className="flex items-center gap-2">
-                  <h3 className="text-base font-bold text-slate-100">
+                  <h3 className={`text-base font-bold ${t.textPrimary}`}>
                     {selectedHotspot.name}
                   </h3>
                   <span className={`text-xs px-2 py-0.5 rounded-full font-bold border ${getThermalRiskColor(selectedHotspot.thermalRiskLevel).badgeBg} ${getThermalRiskColor(selectedHotspot.thermalRiskLevel).badgeText}`}>
                     {selectedHotspot.thermalRiskLevel}
                   </span>
                 </div>
-                <p className="text-xs text-slate-400 mt-0.5">
-                  {selectedHotspot.region} • Hotspot Risk Score: <strong className="text-rose-400">{selectedHotspot.riskScore}/100</strong>
+                <p className={`text-xs mt-0.5 ${t.textMuted}`}>
+                  {selectedHotspot.region} • Hotspot Risk Score: <strong className={t.light ? 'text-rose-600' : 'text-rose-400'}>{selectedHotspot.riskScore}/100</strong>
                 </p>
               </div>
             </div>
 
             {/* Quick Metrics */}
-            <div className="flex items-center gap-2 bg-slate-950 p-1.5 rounded-lg border border-slate-800 text-xs">
-              <div className="px-2.5 py-1 text-center border-r border-slate-800">
-                <div className="text-[10px] text-slate-400">Ambient Temp</div>
-                <div className="font-mono font-bold text-slate-100">{selectedHotspot.ambientTempC}°C</div>
+            <div className={`flex items-center gap-2 p-1.5 rounded-lg border text-xs ${t.cardBgSunken} ${t.border}`}>
+              <div className={`px-2.5 py-1 text-center border-r ${t.border}`}>
+                <div className={`text-[10px] ${t.textMuted}`}>Ambient Temp</div>
+                <div className={`font-mono font-bold ${t.textPrimary}`}>{selectedHotspot.ambientTempC}°C</div>
               </div>
-              <div className="px-2.5 py-1 text-center border-r border-slate-800">
-                <div className="text-[10px] text-slate-400">Ramp Surface</div>
-                <div className="font-mono font-bold text-rose-400">{selectedHotspot.rampSurfaceTempC}°C</div>
+              <div className={`px-2.5 py-1 text-center border-r ${t.border}`}>
+                <div className={`text-[10px] ${t.textMuted}`}>Ramp Surface</div>
+                <div className={`font-mono font-bold ${t.light ? 'text-rose-600' : 'text-rose-400'}`}>{selectedHotspot.rampSurfaceTempC}°C</div>
               </div>
-              <div className="px-2.5 py-1 text-center border-r border-slate-800">
-                <div className="text-[10px] text-slate-400">Humidity</div>
-                <div className="font-mono font-bold text-sky-400">{selectedHotspot.humidityPercent}%</div>
+              <div className={`px-2.5 py-1 text-center border-r ${t.border}`}>
+                <div className={`text-[10px] ${t.textMuted}`}>Humidity</div>
+                <div className={`font-mono font-bold ${t.light ? 'text-sky-600' : 'text-sky-400'}`}>{selectedHotspot.humidityPercent}%</div>
               </div>
               <div className="px-2.5 py-1 text-center">
-                <div className="text-[10px] text-slate-400">Max Exposure</div>
-                <div className="font-mono font-bold text-amber-400">{selectedHotspot.tarmacExposureRiskMins}m</div>
+                <div className={`text-[10px] ${t.textMuted}`}>Max Exposure</div>
+                <div className={`font-mono font-bold ${t.light ? 'text-amber-600' : 'text-amber-400'}`}>{selectedHotspot.tarmacExposureRiskMins}m</div>
               </div>
             </div>
           </div>
 
           {/* Facility & Cold-Chain Protocol */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
-            <div className="bg-slate-950/70 p-3 rounded-lg border border-slate-800/80">
-              <div className="flex items-center gap-1.5 font-bold text-slate-200 mb-1">
-                <ShieldAlert className="w-4 h-4 text-amber-400" />
+            <div className={`p-3 rounded-lg border ${t.cardBgSunken} ${t.borderSubtle}`}>
+              <div className={`flex items-center gap-1.5 font-bold mb-1 ${t.light ? 'text-slate-800' : 'text-slate-200'}`}>
+                <ShieldAlert className={`w-4 h-4 ${t.light ? 'text-amber-500' : 'text-amber-400'}`} />
                 CEIV Pharma Cold-Chain Infrastructure
               </div>
-              <p className="text-slate-400 leading-relaxed mb-2">
+              <p className={`leading-relaxed mb-2 ${t.textMuted}`}>
                 {selectedHotspot.coldStorageFacilityRating}
               </p>
-              <div className="text-[11px] text-slate-300 bg-slate-900/80 p-2 rounded border border-slate-800">
-                <strong className="text-teal-400">Action Protocol: </strong>
+              <div className={`text-[11px] p-2 rounded border ${t.light ? 'text-slate-700 bg-white border-slate-200' : 'text-slate-300 bg-slate-900/80 border-slate-800'}`}>
+                <strong className={t.light ? 'text-teal-600' : 'text-teal-400'}>Action Protocol: </strong>
                 {selectedHotspot.recommendation}
               </div>
             </div>
 
-            <div className="bg-slate-950/70 p-3 rounded-lg border border-slate-800/80">
+            <div className={`p-3 rounded-lg border ${t.cardBgSunken} ${t.borderSubtle}`}>
               <div className="flex items-center justify-between mb-1.5">
-                <span className="font-bold text-slate-200 flex items-center gap-1.5">
-                  <Layers className="w-4 h-4 text-teal-400" />
+                <span className={`font-bold flex items-center gap-1.5 ${t.light ? 'text-slate-800' : 'text-slate-200'}`}>
+                  <Layers className={`w-4 h-4 ${t.light ? 'text-teal-500' : 'text-teal-400'}`} />
                   Active Shipments Traversing This Zone ({realAffectedLaneCodes.length})
                 </span>
               </div>
               {realAffectedLaneCodes.length === 0 ? (
-                <div className="flex items-center gap-2 py-2 text-slate-400 text-[11px]">
-                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
+                <div className={`flex items-center gap-2 py-2 text-[11px] ${t.textMuted}`}>
+                  <CheckCircle2 className={`w-3.5 h-3.5 flex-shrink-0 ${t.light ? 'text-emerald-500' : 'text-emerald-400'}`} />
                   <span>No active lanes currently route through this zone.</span>
                 </div>
               ) : (
@@ -461,15 +470,17 @@ export const RegionalTemperatureHeatmapView: React.FC<RegionalTemperatureHeatmap
                         <button
                           key={code}
                           onClick={() => matchedLane && onSelectLane(matchedLane)}
-                          className="px-2.5 py-1 rounded bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 font-mono text-[11px] flex items-center gap-1 transition-colors"
+                          className={`px-2.5 py-1 rounded border font-mono text-[11px] flex items-center gap-1 transition-colors ${
+                            t.light ? 'bg-white hover:bg-slate-100 border-slate-200 text-slate-700' : 'bg-slate-900 hover:bg-slate-800 border-slate-700 text-slate-200'
+                          }`}
                         >
                           {code}
-                          <ArrowRight className="w-3 h-3 text-slate-400" />
+                          <ArrowRight className={`w-3 h-3 ${t.textMuted}`} />
                         </button>
                       );
                     })}
                   </div>
-                  <p className="text-[11px] text-slate-400 italic">
+                  <p className={`text-[11px] italic ${t.textMuted}`}>
                     Click any lane code above to inspect real-time core telemetry and thermal margin status.
                   </p>
                 </>

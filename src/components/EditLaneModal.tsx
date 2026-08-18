@@ -5,6 +5,7 @@ import { AirportAutocomplete, AirportValue } from './AirportAutocomplete';
 import { RouteStopsEditor, DraftStop } from './RouteStopsEditor';
 import { recommendTransportMode, checkRouteCertification, CertificationIssue } from '../utils/ports';
 import { usePorts } from '../contexts/PortsContext';
+import { useThemeTokens } from '../contexts/ViewModeContext';
 
 interface EditLaneModalProps {
   lane: TransportLane;
@@ -42,6 +43,7 @@ const MODES: { mode: TransportMode; icon: React.ReactNode; label: string }[] = [
 ];
 
 export const EditLaneModal: React.FC<EditLaneModalProps> = ({ lane, onClose, onSave }) => {
+  const t = useThemeTokens();
   const { ports } = usePorts();
 
   const [origin, setOrigin] = useState<AirportValue>({ city: lane.originCity, iata: lane.originIata, country: lane.originCountry, coords: lane.originCoords });
@@ -96,29 +98,31 @@ export const EditLaneModal: React.FC<EditLaneModalProps> = ({ lane, onClose, onS
     onClose();
   };
 
+  const fieldClass = `w-full ${t.cardBgSunken} border ${t.light ? 'border-slate-300' : 'border-slate-700'} rounded-lg px-2.5 py-1.5 ${t.textPrimary}`;
+
   return (
     <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
-      <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-3xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+      <div className={`${t.cardBg} border ${t.light ? 'border-slate-300' : 'border-slate-700'} rounded-2xl w-full max-w-3xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200`}>
 
         {/* Header */}
-        <div className="p-4 sm:p-5 bg-slate-950 border-b border-slate-800 flex items-center justify-between">
+        <div className={`p-4 sm:p-5 ${t.cardBgSunken} border-b ${t.border} flex items-center justify-between`}>
           <div>
-            <h2 className="text-base sm:text-lg font-bold text-white">Edit Lane: {lane.laneCode}</h2>
-            <p className="text-xs text-slate-400">Reroute in an emergency, change carrier or cargo details, or adjust stops</p>
+            <h2 className={`text-base sm:text-lg font-bold ${t.textPrimary}`}>Edit Lane: {lane.laneCode}</h2>
+            <p className={`text-xs ${t.textMuted}`}>Reroute in an emergency, change carrier or cargo details, or adjust stops</p>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white">
+          <button onClick={onClose} className={`p-1.5 rounded-lg ${t.chipBg} ${t.hoverBg} ${t.textMuted} ${t.light ? 'hover:text-slate-900' : 'hover:text-white'}`}>
             <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Body */}
-        <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 text-xs text-slate-200">
+        <div className={`flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 text-xs ${t.textSecondary}`}>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800">
+            <div className={`p-3 rounded-xl ${t.cardBgSunken} border ${t.border}`}>
               <AirportAutocomplete label="Origin" value={origin} onChange={setOrigin} />
             </div>
-            <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800">
+            <div className={`p-3 rounded-xl ${t.cardBgSunken} border ${t.border}`}>
               <AirportAutocomplete label="Destination" value={destination} onChange={setDestination} />
             </div>
           </div>
@@ -126,14 +130,14 @@ export const EditLaneModal: React.FC<EditLaneModalProps> = ({ lane, onClose, onS
           <RouteStopsEditor origin={origin} destination={destination} stops={stops} onStopsChange={setStops} tempMin={tempMin} tempMax={tempMax} mode={mode} />
 
           {/* Transport Mode */}
-          <div className="p-3 rounded-xl bg-slate-950/80 border border-slate-800 space-y-2">
+          <div className={`p-3 rounded-xl ${t.cardBg} border ${t.border} space-y-2`}>
             <div className="flex items-center justify-between">
-              <label className="text-[11px] font-bold text-teal-400 uppercase tracking-wider">Transport Mode</label>
+              <label className={`text-[11px] font-bold uppercase tracking-wider ${t.light ? 'text-teal-600' : 'text-teal-400'}`}>Transport Mode</label>
               {modeRecommendation && mode !== modeRecommendation.mode && (
                 <button
                   type="button"
                   onClick={() => setMode(modeRecommendation.mode)}
-                  className="text-[10px] text-teal-400 hover:text-teal-300 font-semibold flex items-center gap-1"
+                  className={`text-[10px] font-semibold flex items-center gap-1 ${t.light ? 'text-teal-600 hover:text-teal-700' : 'text-teal-400 hover:text-teal-300'}`}
                   title={modeRecommendation.reason}
                 >
                   <Sparkles className="w-3 h-3" /> Recommended: {modeRecommendation.mode}
@@ -147,7 +151,9 @@ export const EditLaneModal: React.FC<EditLaneModalProps> = ({ lane, onClose, onS
                   type="button"
                   onClick={() => setMode(m.mode)}
                   className={`p-2 rounded-lg border flex items-center justify-center gap-1.5 transition-all ${
-                    mode === m.mode ? 'bg-emerald-500/20 border-emerald-500 text-emerald-300 font-bold' : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+                    mode === m.mode
+                      ? t.light ? 'bg-emerald-100 border-emerald-400 text-emerald-700 font-bold' : 'bg-emerald-500/20 border-emerald-500 text-emerald-300 font-bold'
+                      : `${t.cardBgSunken} ${t.border} ${t.textMuted} ${t.light ? 'hover:text-slate-900' : 'hover:text-slate-200'}`
                   }`}
                 >
                   {m.icon}
@@ -160,20 +166,20 @@ export const EditLaneModal: React.FC<EditLaneModalProps> = ({ lane, onClose, onS
           {/* Carrier & Product */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
-              <label className="block text-[11px] text-slate-400 mb-1">Carrier</label>
+              <label className={`block text-[11px] mb-1 ${t.textMuted}`}>Carrier</label>
               <input
                 type="text"
                 value={carrier}
                 onChange={(e) => setCarrier(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-100"
+                className={fieldClass}
               />
             </div>
             <div>
-              <label className="block text-[11px] text-slate-400 mb-1">Product Type</label>
+              <label className={`block text-[11px] mb-1 ${t.textMuted}`}>Product Type</label>
               <select
                 value={productCategory}
                 onChange={(e) => setProductCategory(e.target.value as any)}
-                className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-100"
+                className={fieldClass}
               >
                 <option value="Vaccines">mRNA & Viral Vaccines</option>
                 <option value="Biologics">Monoclonal Antibodies & Biologics</option>
@@ -184,19 +190,19 @@ export const EditLaneModal: React.FC<EditLaneModalProps> = ({ lane, onClose, onS
               </select>
             </div>
             <div className="sm:col-span-2">
-              <label className="block text-[11px] text-slate-400 mb-1">Product Name</label>
+              <label className={`block text-[11px] mb-1 ${t.textMuted}`}>Product Name</label>
               <input
                 type="text"
                 value={productName}
                 onChange={(e) => setProductName(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-100"
+                className={fieldClass}
               />
             </div>
           </div>
 
           {/* Temperature Range */}
-          <div className="p-3 rounded-xl bg-slate-950/80 border border-slate-800 space-y-2">
-            <label className="block text-[11px] font-bold text-teal-400 uppercase tracking-wider">Required Temperature Range</label>
+          <div className={`p-3 rounded-xl ${t.cardBg} border ${t.border} space-y-2`}>
+            <label className={`block text-[11px] font-bold uppercase tracking-wider ${t.light ? 'text-teal-600' : 'text-teal-400'}`}>Required Temperature Range</label>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
               {(['2°C to 8°C (Cold Chain)', '-20°C (Deep Freeze)', '-80°C (Cryogenic)', '15°C to 25°C (Controlled Room Temp)'] as TemperatureRangeType[]).map((type) => (
                 <button
@@ -204,7 +210,9 @@ export const EditLaneModal: React.FC<EditLaneModalProps> = ({ lane, onClose, onS
                   type="button"
                   onClick={() => handleRangeTypeChange(type)}
                   className={`p-2 rounded-lg border text-left transition-all ${
-                    tempRangeType === type ? 'bg-teal-500/20 text-teal-300 border-teal-500 font-bold' : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+                    tempRangeType === type
+                      ? t.light ? 'bg-teal-100 text-teal-700 border-teal-400 font-bold' : 'bg-teal-500/20 text-teal-300 border-teal-500 font-bold'
+                      : `${t.cardBgSunken} ${t.border} ${t.textMuted} ${t.light ? 'hover:text-slate-900' : 'hover:text-slate-200'}`
                   }`}
                 >
                   <div className="text-[11px]">{type}</div>
@@ -215,26 +223,32 @@ export const EditLaneModal: React.FC<EditLaneModalProps> = ({ lane, onClose, onS
 
           {/* Certification Check */}
           <div className={`p-3.5 rounded-xl border flex items-start gap-2.5 ${
-            certificationIssues.length === 0 ? 'bg-emerald-950/30 border-emerald-800/50' : 'bg-amber-950/30 border-amber-800/50'
+            certificationIssues.length === 0
+              ? t.light ? 'bg-emerald-50 border-emerald-300' : 'bg-emerald-950/30 border-emerald-800/50'
+              : t.light ? 'bg-amber-50 border-amber-300' : 'bg-amber-950/30 border-amber-800/50'
           }`}>
             {certificationIssues.length === 0 ? (
-              <ShieldCheck className="w-5 h-5 text-emerald-400 flex-shrink-0 mt-0.5" />
+              <ShieldCheck className={`w-5 h-5 flex-shrink-0 mt-0.5 ${t.light ? 'text-emerald-600' : 'text-emerald-400'}`} />
             ) : (
-              <AlertTriangle className="w-5 h-5 text-amber-400 flex-shrink-0 mt-0.5" />
+              <AlertTriangle className={`w-5 h-5 flex-shrink-0 mt-0.5 ${t.light ? 'text-amber-600' : 'text-amber-400'}`} />
             )}
             <div>
-              <div className={`text-xs font-bold ${certificationIssues.length === 0 ? 'text-emerald-300' : 'text-amber-300'}`}>
+              <div className={`text-xs font-bold ${
+                certificationIssues.length === 0
+                  ? t.light ? 'text-emerald-700' : 'text-emerald-300'
+                  : t.light ? 'text-amber-700' : 'text-amber-300'
+              }`}>
                 {certificationIssues.length === 0 ? 'All ports on this route are certified for this cargo' : `${certificationIssues.length} certification issue${certificationIssues.length > 1 ? 's' : ''} on this route`}
               </div>
               {certificationIssues.length > 0 && (
                 <ul className="mt-1 space-y-0.5">
                   {certificationIssues.map((issue, i) => (
-                    <li key={i} className="text-[11px] text-slate-300">{issue.issue}</li>
+                    <li key={i} className={`text-[11px] ${t.textSecondary}`}>{issue.issue}</li>
                   ))}
                 </ul>
               )}
               {certificationIssues.length > 0 && (
-                <p className="text-[10px] text-slate-500 mt-1">Saving will still be allowed, but an alert will be logged for QA follow-up.</p>
+                <p className={`text-[10px] mt-1 ${t.textFaint}`}>Saving will still be allowed, but an alert will be logged for QA follow-up.</p>
               )}
             </div>
           </div>
@@ -242,8 +256,8 @@ export const EditLaneModal: React.FC<EditLaneModalProps> = ({ lane, onClose, onS
         </div>
 
         {/* Footer */}
-        <div className="p-4 bg-slate-950 border-t border-slate-800 flex items-center justify-between">
-          <button onClick={onClose} className="px-3.5 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold">
+        <div className={`p-4 ${t.cardBgSunken} border-t ${t.border} flex items-center justify-between`}>
+          <button onClick={onClose} className={`px-3.5 py-2 rounded-lg text-xs font-semibold ${t.chipBg} ${t.hoverBg} ${t.textSecondary}`}>
             Cancel
           </button>
           <button

@@ -11,6 +11,7 @@ import {
 } from '../services/supabaseService';
 import { computeLegRecommendations, LegMode, LegRecommendation } from '../utils/legRecommendation';
 import { LegCarrierBreakdown } from './LegCarrierBreakdown';
+import { useThemeTokens } from '../contexts/ViewModeContext';
 
 interface LaneCarrierAssignmentPanelProps {
   lane: TransportLane;
@@ -23,6 +24,7 @@ interface LaneCarrierAssignmentPanelProps {
  * editable, per the spec, not just at creation time.
  */
 export const LaneCarrierAssignmentPanel: React.FC<LaneCarrierAssignmentPanelProps> = ({ lane }) => {
+  const t = useThemeTokens();
   const [carriers, setCarriers] = useState<Carrier[]>([]);
   const [performanceByCarrierId, setPerformanceByCarrierId] = useState<Map<string, CarrierPerformanceSummary>>(new Map());
   const [certStatusByCarrierId, setCertStatusByCarrierId] = useState<Map<string, CarrierCertificationStatus['certificationStatus']>>(new Map());
@@ -98,23 +100,25 @@ export const LaneCarrierAssignmentPanel: React.FC<LaneCarrierAssignmentPanelProp
 
   if (!legs) {
     return (
-      <div className="bg-slate-950/70 border border-slate-800 rounded-xl p-4 flex items-center gap-2 text-xs text-slate-400">
+      <div className={`${t.cardBgSunken} border ${t.border} rounded-xl p-4 flex items-center gap-2 text-xs ${t.textMuted}`}>
         <Loader2 className="w-4 h-4 animate-spin" /> Loading carrier assignment…
       </div>
     );
   }
 
   return (
-    <div className="bg-slate-950/70 border border-slate-800 rounded-xl p-4">
+    <div className={`${t.cardBgSunken} border ${t.border} rounded-xl p-4`}>
       <div className="flex items-center justify-between mb-3">
-        <h3 className="text-sm font-bold text-slate-200 uppercase tracking-wider flex items-center gap-2">
-          <Truck className="w-4 h-4 text-teal-400" />
+        <h3 className={`text-sm font-bold uppercase tracking-wider flex items-center gap-2 ${t.textSecondary}`}>
+          <Truck className={`w-4 h-4 ${t.light ? 'text-teal-600' : 'text-teal-400'}`} />
           Carrier Assignment
         </h3>
         <button
           onClick={handleSave}
           disabled={saving || anyLegBlocked}
-          className="px-2.5 py-1.5 rounded-lg bg-teal-500/15 hover:bg-teal-500/25 text-teal-300 border border-teal-500/30 text-[11px] font-semibold flex items-center gap-1.5 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+          className={`px-2.5 py-1.5 rounded-lg border text-[11px] font-semibold flex items-center gap-1.5 transition-all disabled:opacity-40 disabled:cursor-not-allowed ${
+            t.light ? 'bg-teal-100 hover:bg-teal-200 text-teal-700 border-teal-300' : 'bg-teal-500/15 hover:bg-teal-500/25 text-teal-300 border-teal-500/30'
+          }`}
         >
           <Save className="w-3.5 h-3.5" />
           <span>{saving ? 'Saving…' : 'Save Changes'}</span>
@@ -133,7 +137,7 @@ export const LaneCarrierAssignmentPanel: React.FC<LaneCarrierAssignmentPanelProp
         onAnyLegBlocked={setAnyLegBlocked}
       />
 
-      {saveMessage && <p className="text-[11px] text-slate-400 mt-2">{saveMessage}</p>}
+      {saveMessage && <p className={`text-[11px] mt-2 ${t.textMuted}`}>{saveMessage}</p>}
     </div>
   );
 };
