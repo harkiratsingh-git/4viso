@@ -967,6 +967,7 @@ export default function App() {
           onCreateLane={handleCreateLane}
           onViewLane={(lane) => setRiskModalLane(lane)}
           onLogAuditEntry={appendAuditLog}
+          dataSource={dataSource}
         />
       )}
 

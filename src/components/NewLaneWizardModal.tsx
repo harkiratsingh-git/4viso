@@ -48,6 +48,11 @@ interface NewLaneWizardModalProps {
   onCreateLane: (newLane: TransportLane) => void;
   onViewLane: (lane: TransportLane) => void;
   onLogAuditEntry: (laneCode: string, action: string, category: AuditLogEntry['category'], details: string) => void;
+  /** Only attempt the Supabase writes (transport_lanes/lane_legs/lane_route_options) when
+   *  genuinely cloud-connected — matching every other cloud-only read/write in this app. In
+   *  local/demo mode there's no real backing session to write against (RLS correctly rejects
+   *  it), and it would pollute the shared project with demo data even if it somehow succeeded. */
+  dataSource: 'loading' | 'cloud' | 'local';
 }
 
 const defaultOrigin = (): AirportValue => ({ city: 'Frankfurt', iata: 'FRA', country: 'Germany', coords: getAirportCoords('FRA') });
@@ -58,6 +63,7 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
   onCreateLane,
   onViewLane,
   onLogAuditEntry,
+  dataSource,
 }) => {
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
   const [createdLane, setCreatedLane] = useState<TransportLane | null>(null);
@@ -442,39 +448,44 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
 
     // Fire-and-forget persistence, matching the pattern used elsewhere in this wizard (e.g.
     // insertAuditLogEntry) — these writes shouldn't block the confirmation screen from showing.
-    // The lane itself must be inserted into transport_lanes first (a no-op returning false when
-    // offline/local) before the legs/route-options, since both of those carry a foreign key to
-    // it — firing them in parallel with the lane insert (or not inserting the lane at all, which
-    // is what this wizard used to do) means they'd fail against a lane row that doesn't exist
-    // yet, or ever, server-side.
-    insertLaneToSupabase(newLane).then((created) => {
-      if (!created) return;
-      replaceLaneLegs(newLane.id, resolvedLegs);
-      if (computedRouteOptions) {
-        for (const opt of computedRouteOptions) {
-          insertLaneRouteOption(
-            {
-              optionType: opt.type,
-              legsSnapshot: opt.legs.map((l) => ({
-                legSequence: l.legSequence,
-                origin: l.origin.iata,
-                destination: l.destination.iata,
-                mode: l.mode,
-                carrierId: l.topCarrierPick?.carrier.id ?? null,
-                riskScore: l.riskScore,
-              })),
-              totalDistanceKm: opt.totalDistanceKm,
-              totalTransitHours: null,
-              totalCustomsDelayHours: null,
-              totalRiskScore: opt.totalRiskScore,
-              wasChosen: opt.type === selectedRouteOption,
-            },
-            newLane.id,
-            currentUser.id
-          );
+    // Only attempted when genuinely cloud-connected: in local/demo mode there's no real
+    // authenticated session for RLS to accept, and the demo dataset's local user id isn't even
+    // a real UUID (lane_route_options.created_by requires one) — matching how every other
+    // cloud-only read/write in this app is gated behind dataSource === 'cloud'. The lane itself
+    // must be inserted into transport_lanes first (a no-op returning false if that fails) before
+    // the legs/route-options, since both of those carry a foreign key to it — firing them in
+    // parallel with the lane insert (or not inserting the lane at all, which is what this
+    // wizard used to do) means they'd fail against a lane row that doesn't exist server-side.
+    if (dataSource === 'cloud') {
+      insertLaneToSupabase(newLane).then((created) => {
+        if (!created) return;
+        replaceLaneLegs(newLane.id, resolvedLegs);
+        if (computedRouteOptions) {
+          for (const opt of computedRouteOptions) {
+            insertLaneRouteOption(
+              {
+                optionType: opt.type,
+                legsSnapshot: opt.legs.map((l) => ({
+                  legSequence: l.legSequence,
+                  origin: l.origin.iata,
+                  destination: l.destination.iata,
+                  mode: l.mode,
+                  carrierId: l.topCarrierPick?.carrier.id ?? null,
+                  riskScore: l.riskScore,
+                })),
+                totalDistanceKm: opt.totalDistanceKm,
+                totalTransitHours: null,
+                totalCustomsDelayHours: null,
+                totalRiskScore: opt.totalRiskScore,
+                wasChosen: opt.type === selectedRouteOption,
+              },
+              newLane.id,
+              currentUser.id
+            );
+          }
         }
-      }
-    });
+      });
+    }
   };
 
   const stepLabels = ['1. Route & Cargo', '2. Mode', '3. Risk Check', '4. Alert Rules'];
