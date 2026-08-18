@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   X,
   AlertTriangle,
@@ -22,6 +22,7 @@ import {
 import { TransportLane, RiskFactor, RiskLevel } from '../types';
 import { getRiskColor, getStatusColor, formatCurrency } from '../utils/formatters';
 import { isLaneExcursing, getEffectiveRiskLevel, getEffectiveRiskScore } from '../utils/laneRisk';
+import { generateDefaultRiskFactors } from '../utils/riskFactors';
 import { LaneCarrierAssignmentPanel } from './LaneCarrierAssignmentPanel';
 import { LaneDisruptionPanel } from './LaneDisruptionPanel';
 import { useThemeTokens } from '../contexts/ViewModeContext';
@@ -33,6 +34,8 @@ interface LaneRiskAssessmentModalProps {
   onManageStops: (lane: TransportLane) => void;
   onEditLane: (lane: TransportLane) => void;
   onAddRiskFactor: (laneId: string, risk: RiskFactor) => void;
+  onExecuteMitigation: (laneId: string, risk: RiskFactor) => void;
+  onHydrateRiskFactors: (laneId: string, risks: RiskFactor[]) => void;
   dataSource: 'loading' | 'cloud' | 'local';
 }
 
@@ -44,6 +47,8 @@ export const LaneRiskAssessmentModal: React.FC<LaneRiskAssessmentModalProps> = (
   onManageStops,
   onEditLane,
   onAddRiskFactor,
+  onExecuteMitigation,
+  onHydrateRiskFactors,
 }) => {
   const t = useThemeTokens();
   const [selectedRiskCategory, setSelectedRiskCategory] = useState<string>('All');
@@ -76,8 +81,31 @@ export const LaneRiskAssessmentModal: React.FC<LaneRiskAssessmentModalProps> = (
     return r.category === selectedRiskCategory;
   });
 
-  const handleExecuteMitigation = (riskTitle: string, actionText: string) => {
-    setActionSuccessMsg(`Action Dispatched: "${actionText}" executed for "${riskTitle}". Audit trail logged.`);
+  // Risk factors are never persisted server-side, so a lane fetched from Supabase arrives with
+  // risks: [] — hydrate it with the same generation logic the wizard uses, once, so a real
+  // cloud lane gets the identical Risk Assessment experience a demo lane already has instead of
+  // an empty "No risk factors logged" list.
+  useEffect(() => {
+    if (lane.risks.length > 0) return;
+    const generated = generateDefaultRiskFactors({
+      originIata: lane.originIata,
+      originCoords: lane.originCoords,
+      destinationIata: lane.destinationIata,
+      destinationCoords: lane.destinationCoords,
+      stops: lane.stops.map((s) => ({ iata: s.iata, coords: s.coords, city: s.city })),
+      mode: lane.mode,
+      tempMin: lane.tempMin,
+      tempMax: lane.tempMax,
+      carrierName: lane.carrier,
+    });
+    onHydrateRiskFactors(lane.id, generated);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lane.id, lane.risks.length]);
+
+  const handleExecuteMitigation = (risk: RiskFactor) => {
+    onExecuteMitigation(lane.id, risk);
+    const capaNote = risk.category === 'Regulatory & GDP' ? ' A CAPA has been opened.' : '';
+    setActionSuccessMsg(`Mitigation actioned: "${risk.title}". Logged to audit trail.${capaNote}`);
     setTimeout(() => setActionSuccessMsg(null), 4000);
   };
 
@@ -352,7 +380,7 @@ export const LaneRiskAssessmentModal: React.FC<LaneRiskAssessmentModalProps> = (
               </div>
             </div>
 
-          <LaneCarrierAssignmentPanel lane={lane} />
+          <LaneCarrierAssignmentPanel lane={lane} dataSource={dataSource} />
 
           <LaneDisruptionPanel
             lane={lane}
@@ -548,6 +576,7 @@ export const LaneRiskAssessmentModal: React.FC<LaneRiskAssessmentModalProps> = (
               ) : (
                 filteredRisks.map((risk) => {
                   const itemRiskStyles = getRiskColor(risk.severity, t.light);
+                  const actioned = risk.status === 'Mitigation Actioned';
 
                   return (
                     <div
@@ -561,7 +590,7 @@ export const LaneRiskAssessmentModal: React.FC<LaneRiskAssessmentModalProps> = (
                       }`}
                     >
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2">
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <span className={`px-2 py-0.5 rounded text-[10px] font-extrabold ${itemRiskStyles.badge}`}>
                             {risk.severity.toUpperCase()} • {risk.score}%
                           </span>
@@ -571,6 +600,13 @@ export const LaneRiskAssessmentModal: React.FC<LaneRiskAssessmentModalProps> = (
                           <span className={`text-[10px] font-mono ${t.textFaint}`}>
                             Likelihood: {risk.likelihood} | Impact: {risk.impact}
                           </span>
+                          {actioned && (
+                            <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded border ${
+                              t.light ? 'bg-emerald-100 text-emerald-700 border-emerald-300' : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                            }`}>
+                              <CheckCircle2 className="w-2.5 h-2.5" /> Mitigation Actioned
+                            </span>
+                          )}
                         </div>
                         <span className={`text-[11px] font-mono ${t.textMuted}`}>
                           ID: {risk.id}
@@ -591,13 +627,25 @@ export const LaneRiskAssessmentModal: React.FC<LaneRiskAssessmentModalProps> = (
                           <span className={t.textSecondary}>{risk.mitigationStrategy}</span>
                         </div>
                         <button
-                          onClick={() => handleExecuteMitigation(risk.title, risk.recommendedAction)}
-                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-bold whitespace-nowrap transition-all active:scale-95 flex-shrink-0 ${
-                            t.light ? 'bg-emerald-100 hover:bg-emerald-200 text-emerald-700 border-emerald-300' : 'bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border-emerald-500/40'
+                          onClick={() => !actioned && handleExecuteMitigation(risk)}
+                          disabled={actioned}
+                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-bold whitespace-nowrap transition-all flex-shrink-0 ${
+                            actioned
+                              ? `${t.chipBg} ${t.textMuted} ${t.light ? 'border-slate-300' : 'border-slate-700'} cursor-default`
+                              : `active:scale-95 ${t.light ? 'bg-emerald-100 hover:bg-emerald-200 text-emerald-700 border-emerald-300' : 'bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border-emerald-500/40'}`
                           }`}
                         >
-                          <span>Execute Mitigation</span>
-                          <ArrowRight className="w-3.5 h-3.5" />
+                          {actioned ? (
+                            <>
+                              <CheckCircle2 className="w-3.5 h-3.5" />
+                              <span>Actioned</span>
+                            </>
+                          ) : (
+                            <>
+                              <span>Execute Mitigation</span>
+                              <ArrowRight className="w-3.5 h-3.5" />
+                            </>
+                          )}
                         </button>
                       </div>
                     </div>

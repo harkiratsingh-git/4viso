@@ -17,6 +17,7 @@ import {
 import { TransportLane, TransportMode, TemperatureRangeType, RiskFactor, RouteStop, Carrier, CorridorAdvisory, AuditLogEntry, CarrierPerformanceSummary, CarrierCertificationStatus } from '../types';
 import { getAirportCoords } from '../utils/geo';
 import { assessRoute } from '../utils/riskAssessment';
+import { generateDefaultRiskFactors } from '../utils/riskFactors';
 import { recommendTransportMode, findBackupTransportMode } from '../utils/ports';
 import { stopSetsDiffer } from '../utils/routeComparison';
 import { getRiskColor } from '../utils/formatters';
@@ -377,52 +378,17 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
         plannedDwellHours: s.plannedDwellHours,
       }));
 
-    const defaultRisks: RiskFactor[] = [
-      {
-        id: `r-${Date.now()}-1`,
-        category: 'Handling Quality',
-        title: `${origin.iata} to ${destination.iata} Intermodal Ramp Handover`,
-        description: 'Tarmac loading and transfer between cold warehouse and aircraft main deck.',
-        severity: 'Low',
-        score: 12,
-        likelihood: 'Low',
-        impact: 'Minor',
-        mitigationStrategy: 'Pre-book temperature-controlled pharma dollies with GHA.',
-        recommendedAction: 'Verify thermal cover wrap on arrival.'
-      },
-      {
-        id: `r-${Date.now()}-2`,
-        category: 'Carrier Reliability',
-        title: `${resolvedCarrierName} Cold-Chain SOP Compliance`,
-        description: 'Carrier SLA and thermal container maintenance validation.',
-        severity: 'Low',
-        score: 8,
-        likelihood: 'Low',
-        impact: 'Minor',
-        mitigationStrategy: 'IoT telemetry probe linked to carrier tracking API.',
-        recommendedAction: 'Continuous automated polling enabled.'
-      },
-      ...(assessment
-        ? assessment.legs
-            .filter((l) => l.flags.length > 0)
-            .map((l, i) => ({
-              id: `r-${Date.now()}-hotspot-${i}`,
-              category: 'Weather & Environment' as const,
-              title: `${l.label} (${l.iata}) Thermal Corridor Exposure`,
-              description: l.flags.join(' '),
-              severity: (l.riskScore >= 30 ? 'High' : 'Medium') as RiskFactor['severity'],
-              score: l.riskScore,
-              likelihood: 'Moderate' as const,
-              impact: 'Major' as const,
-              mitigationStrategy: l.label.startsWith('Stop')
-                ? assessment.suggestedHubs.length
-                  ? `Consider rerouting via ${assessment.suggestedHubs.join(', ')} instead.`
-                  : 'Deploy thermal cover wrap and minimize tarmac dwell time at this stop.'
-                : 'Fixed origin/destination point — cannot be rerouted. Apply additional ground-handling mitigation (pre-conditioned ULDs/containers, expedited tarmac transfer, CEIV Pharma-certified facility handling) instead.',
-              recommendedAction: 'Reassess this leg before dispatch; monitor telemetry closely on arrival.'
-            }))
-        : [])
-    ];
+    const defaultRisks: RiskFactor[] = generateDefaultRiskFactors({
+      originIata: origin.iata,
+      originCoords: origin.coords,
+      destinationIata: destination.iata,
+      destinationCoords: destination.coords,
+      stops: stops.filter((s) => s.iata.trim()).map((s) => ({ iata: s.iata, coords: s.coords, city: s.city })),
+      mode,
+      tempMin,
+      tempMax,
+      carrierName: resolvedCarrierName,
+    });
 
     const newLane: TransportLane = {
       id: `lane-${Date.now()}`,

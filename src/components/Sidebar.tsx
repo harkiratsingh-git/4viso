@@ -10,19 +10,24 @@ import {
   UserCheck,
   PlusCircle,
   LogOut,
+  LogIn,
   ChevronUp,
   Bot,
+  Lock,
 } from 'lucide-react';
 import { UserRole, SupabaseUser } from '../types';
 import { useViewMode } from '../contexts/ViewModeContext';
+import { Avatar } from './Avatar';
 
 export type AppTab = 'DASHBOARD' | 'LANES' | 'COMPLIANCE' | 'AUDIT_LOGS' | 'SETTINGS' | 'LOGIN';
 
+/** Role metadata (title/department) for display purposes only — not a tracked "active persona"
+ *  state. currentUser.role is the one source of truth for who someone actually is. */
 export const USER_ROLES: UserRole[] = [
-  { id: 'quality', title: 'Quality Assurance Lead', department: 'Global QA & Validation', name: 'Dr. Elena Rostova' },
-  { id: 'logistics', title: 'Logistics Operations Lead', department: 'Cold Chain Logistics', name: 'Marcus Vance' },
-  { id: 'auditor', title: 'GDP Compliance Auditor', department: 'Regulatory Affairs', name: 'Sarah Jenkins' },
-  { id: 'executive', title: 'Senior IoT Telemetry VP', department: 'Executive Oversight', name: 'Alex Chen' },
+  { id: 'quality', title: 'Quality Assurance Lead', department: 'Global QA & Validation', name: 'Quality Lead' },
+  { id: 'logistics', title: 'Logistics Operations Lead', department: 'Cold Chain Logistics', name: 'Logistics Director' },
+  { id: 'auditor', title: 'GDP Compliance Auditor', department: 'Regulatory Affairs', name: 'GDP Auditor' },
+  { id: 'executive', title: 'Supply Chain Analyst', department: 'Predictive Analytics & IoT', name: 'Supply Chain Analyst' },
 ];
 
 interface SidebarProps {
@@ -33,8 +38,8 @@ interface SidebarProps {
   onOpenCloudSync?: () => void;
   onOpenAssistant?: () => void;
   onLogout?: () => void;
-  currentUser?: SupabaseUser;
-  activeRole: UserRole;
+  currentUser: SupabaseUser;
+  isAuthenticated: boolean;
   /** Visibility/positioning classes for the root <aside> — the persistent desktop rail hides
    *  below `md`, but the same component reused inside a mobile overlay drawer must stay
    *  visible, so the caller controls this rather than it being hardcoded here. */
@@ -47,11 +52,16 @@ interface NavRowProps {
   active?: boolean;
   onClick: () => void;
   light: boolean;
+  /** This item is reachable but requires a real Supabase Auth session — clicking it still
+   *  works (App.tsx routes it through the plan-selection gate), this is just an at-a-glance
+   *  hint before the click, not a disabled state. */
+  locked?: boolean;
 }
 
-const NavRow: React.FC<NavRowProps> = ({ icon, label, active, onClick, light }) => (
+const NavRow: React.FC<NavRowProps> = ({ icon, label, active, onClick, light, locked }) => (
   <button
     onClick={onClick}
+    title={locked ? `${label} — requires sign-in` : undefined}
     className={`w-full min-h-[38px] flex items-center gap-2.5 px-3 rounded-lg text-xs font-semibold transition-all text-left ${
       active
         ? 'bg-emerald-500/15 text-emerald-600 border border-emerald-500/30'
@@ -61,7 +71,8 @@ const NavRow: React.FC<NavRowProps> = ({ icon, label, active, onClick, light }) 
     }`}
   >
     <span className="flex-shrink-0">{icon}</span>
-    <span className="truncate">{label}</span>
+    <span className="truncate flex-1">{label}</span>
+    {locked && <Lock className="w-3 h-3 flex-shrink-0 opacity-60" />}
   </button>
 );
 
@@ -74,7 +85,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onOpenAssistant,
   onLogout,
   currentUser,
-  activeRole,
+  isAuthenticated,
   className = 'hidden md:flex md:flex-col md:sticky md:top-0 md:h-screen',
 }) => {
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
@@ -159,13 +170,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
               onClick={() => onSwitchTab('SETTINGS')}
               light={light}
             />
-            <NavRow
-              icon={<UserCheck className="w-4 h-4 text-slate-400" />}
-              label="Sign In / Personas"
-              active={activeTab === 'LOGIN'}
-              onClick={() => onSwitchTab('LOGIN')}
-              light={light}
-            />
+            {!isAuthenticated && (
+              <NavRow
+                icon={<UserCheck className="w-4 h-4 text-slate-400" />}
+                label="Sign In / Register"
+                active={activeTab === 'LOGIN'}
+                onClick={() => onSwitchTab('LOGIN')}
+                light={light}
+              />
+            )}
           </div>
         </div>
       </nav>
@@ -186,16 +199,41 @@ export const Sidebar: React.FC<SidebarProps> = ({
               className={`absolute bottom-full left-0 mb-2 w-full rounded-xl shadow-2xl z-50 p-1.5 text-xs border ${light ? 'bg-white border-slate-200' : 'bg-slate-900 border-slate-700'}`}
               onMouseLeave={() => setIsUserMenuOpen(false)}
             >
-              <button
-                onClick={() => {
-                  setIsUserMenuOpen(false);
-                  onLogout?.();
-                }}
-                className={`w-full text-left px-2.5 py-2 rounded-lg flex items-center gap-2 ${light ? 'hover:bg-slate-100 text-slate-600 hover:text-slate-900' : 'hover:bg-slate-800 text-slate-300 hover:text-white'}`}
-              >
-                <LogOut className="w-3.5 h-3.5 text-slate-400" />
-                <span>Sign Out</span>
-              </button>
+              {isAuthenticated ? (
+                <>
+                  <button
+                    onClick={() => {
+                      setIsUserMenuOpen(false);
+                      onSwitchTab('SETTINGS');
+                    }}
+                    className={`w-full text-left px-2.5 py-2 rounded-lg flex items-center gap-2 ${light ? 'hover:bg-slate-100 text-slate-600 hover:text-slate-900' : 'hover:bg-slate-800 text-slate-300 hover:text-white'}`}
+                  >
+                    <UserCheck className="w-3.5 h-3.5 text-slate-400" />
+                    <span>Profile Settings</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      setIsUserMenuOpen(false);
+                      onLogout?.();
+                    }}
+                    className={`w-full text-left px-2.5 py-2 rounded-lg flex items-center gap-2 ${light ? 'hover:bg-slate-100 text-slate-600 hover:text-slate-900' : 'hover:bg-slate-800 text-slate-300 hover:text-white'}`}
+                  >
+                    <LogOut className="w-3.5 h-3.5 text-slate-400" />
+                    <span>Sign Out</span>
+                  </button>
+                </>
+              ) : (
+                <button
+                  onClick={() => {
+                    setIsUserMenuOpen(false);
+                    onSwitchTab('LOGIN');
+                  }}
+                  className={`w-full text-left px-2.5 py-2 rounded-lg flex items-center gap-2 ${light ? 'hover:bg-slate-100 text-slate-600 hover:text-slate-900' : 'hover:bg-slate-800 text-slate-300 hover:text-white'}`}
+                >
+                  <LogIn className="w-3.5 h-3.5 text-slate-400" />
+                  <span>Sign In</span>
+                </button>
+              )}
             </div>
           )}
 
@@ -203,14 +241,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
             onClick={() => setIsUserMenuOpen((v) => !v)}
             className={`w-full flex items-center gap-2 p-1.5 rounded-lg transition-colors text-left ${light ? 'hover:bg-slate-100' : 'hover:bg-slate-800/60'}`}
           >
-            <img
-              src={currentUser?.avatarUrl || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&h=100&fit=crop&crop=faces'}
-              alt={currentUser?.name || activeRole.name}
-              className="w-7 h-7 rounded-full border border-teal-500/40 object-cover flex-shrink-0"
-            />
+            <Avatar name={currentUser.name} avatarUrl={currentUser.avatarUrl} size={28} />
             <div className="min-w-0 flex-1">
-              <div className={`text-[11px] font-bold truncate ${light ? 'text-slate-900' : 'text-white'}`}>{currentUser?.name || activeRole.name}</div>
-              <div className="text-[9px] text-teal-500 truncate">{currentUser?.role || activeRole.title}</div>
+              <div className={`text-[11px] font-bold truncate ${light ? 'text-slate-900' : 'text-white'}`}>{currentUser.name}</div>
+              <div className="text-[9px] text-teal-500 truncate">{isAuthenticated ? currentUser.role : 'Local Simulation'}</div>
             </div>
             <ChevronUp className={`w-3 h-3 text-slate-500 flex-shrink-0 transition-transform ${isUserMenuOpen ? '' : 'rotate-180'}`} />
           </button>

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Search, Bell, Menu, Sparkles, LayoutGrid, Sun, Moon } from 'lucide-react';
+import { Search, Bell, Menu, Sparkles, LayoutGrid, Sun, Moon, Lock } from 'lucide-react';
 import { AlertNotification } from '../types';
 import { LiveIndicator } from './LiveIndicator';
 import { useViewMode } from '../contexts/ViewModeContext';
@@ -13,6 +13,9 @@ interface TopBarProps {
   onOpenAlerts: () => void;
   realtimeStatus: 'disabled' | 'connecting' | 'live' | 'reconnecting';
   onOpenMobileNav?: () => void;
+  /** Advanced mode requires a real Supabase Auth session — Simple mode stays open regardless. */
+  isAuthenticated: boolean;
+  onRequireAdvancedAuth: () => void;
 }
 
 /**
@@ -29,6 +32,8 @@ export const TopBar: React.FC<TopBarProps> = ({
   onOpenAlerts,
   realtimeStatus,
   onOpenMobileNav,
+  isAuthenticated,
+  onRequireAdvancedAuth,
 }) => {
   const { mode, setMode, theme, setTheme } = useViewMode();
   const light = theme === 'light';
@@ -67,15 +72,16 @@ export const TopBar: React.FC<TopBarProps> = ({
               <Sparkles className="w-3 h-3" /> Simple
             </button>
             <button
-              onClick={() => setMode('advanced')}
-              title="Advanced: full operational detail — per-leg routing, comparisons, thermal maps"
+              onClick={() => (isAuthenticated ? setMode('advanced') : onRequireAdvancedAuth())}
+              title={isAuthenticated ? 'Advanced: full operational detail — per-leg routing, comparisons, thermal maps' : 'Advanced mode requires signing in'}
               className={`px-2.5 py-1 rounded-md font-semibold flex items-center gap-1 transition-colors ${
                 mode === 'advanced'
                   ? 'bg-emerald-600 text-white'
                   : light ? 'text-slate-500 hover:text-slate-700' : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              <LayoutGrid className="w-3 h-3" /> Advanced
+              {isAuthenticated ? <LayoutGrid className="w-3 h-3" /> : <Lock className="w-3 h-3" />}
+              <span>Advanced</span>
             </button>
           </div>
 

@@ -1,14 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Bot, Send, X, Sparkles, FileDown, ArrowUpRight, AlertTriangle, Loader2 } from 'lucide-react';
-import { SupabaseUser, UserRole } from '../types';
+import { SupabaseUser } from '../types';
 import { sendAssistantMessage, AssistantMessage, AssistantStructuredResult } from '../services/assistantService';
 import { useThemeTokens, ThemeTokens } from '../contexts/ViewModeContext';
 
 interface ChatAssistantProps {
   isOpen: boolean;
   onClose: () => void;
-  currentUser?: SupabaseUser;
-  activeRole: UserRole;
+  currentUser: SupabaseUser;
   dataSource: 'loading' | 'cloud' | 'local';
   onLaneCreated: (laneCode: string) => void;
 }
@@ -92,7 +91,7 @@ function StructuredResultCard({ item, onLaneCreated, t }: { item: AssistantStruc
  * `assistant` Supabase Edge Function, which holds the Anthropic API key and does the actual
  * tool-calling against live data; this component only renders the conversation.
  */
-export const ChatAssistant: React.FC<ChatAssistantProps> = ({ isOpen, onClose, currentUser, activeRole, dataSource, onLaneCreated }) => {
+export const ChatAssistant: React.FC<ChatAssistantProps> = ({ isOpen, onClose, currentUser, dataSource, onLaneCreated }) => {
   const t = useThemeTokens();
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [input, setInput] = useState('');
@@ -108,7 +107,7 @@ export const ChatAssistant: React.FC<ChatAssistantProps> = ({ isOpen, onClose, c
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
   }, [turns, isSending]);
 
-  const actor = { name: currentUser?.name || activeRole.name, role: currentUser?.role || activeRole.title };
+  const actor = { name: currentUser.name, role: currentUser.role };
   const notConnected = dataSource !== 'cloud';
 
   const handleSend = async (textOverride?: string) => {

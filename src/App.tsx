@@ -8,16 +8,17 @@ import {
 import {
   TransportLane,
   FilterState,
-  UserRole,
   AlertNotification,
   AuditLogEntry,
   RiskFactor,
   TemperatureReading,
   SystemSettings,
   SupabaseUser,
-  CorridorAdvisory
+  CorridorAdvisory,
+  Carrier,
+  CarrierPerformanceSummary
 } from './types';
-import { Sidebar, USER_ROLES, AppTab } from './components/Sidebar';
+import { Sidebar, AppTab } from './components/Sidebar';
 import { TopBar } from './components/TopBar';
 import { KpiOverview } from './components/KpiOverview';
 import { GlobalNetworkMap } from './components/GlobalNetworkMap';
@@ -45,7 +46,10 @@ import { AutomatedReportingModal } from './components/AutomatedReportingModal';
 import { SupabaseSyncModal } from './components/SupabaseSyncModal';
 import { SettingsPage } from './components/SettingsPage';
 import { LoginPage } from './components/LoginPage';
-import { getActiveUser, setActiveUser as persistActiveUser, DEFAULT_SUPABASE_USER, fetchAllFromSupabase, restoreSupabaseSession, signOutFromSupabase, fetchDashboardSummary, DashboardSummary, getSupabaseClient, searchLanesRemote, insertAuditLogEntry, syncLaneRiskToSupabase, fetchCorridorAdvisories, fetchCapaRecords, CapaRecord, fetchGdpComplianceSnapshots, GdpComplianceSnapshot } from './services/supabaseService';
+import { PlanSelectionModal } from './components/PlanSelectionModal';
+import { LandingPage } from './components/LandingPage';
+import { getActiveUser, setActiveUser as persistActiveUser, DEFAULT_SUPABASE_USER, fetchAllFromSupabase, restoreSupabaseSession, signOutFromSupabase, fetchDashboardSummary, DashboardSummary, getSupabaseClient, searchLanesRemote, insertAuditLogEntry, syncLaneRiskToSupabase, fetchCorridorAdvisories, fetchCapaRecords, CapaRecord, fetchGdpComplianceSnapshots, GdpComplianceSnapshot, updateLaneRouteInSupabase, updateLaneStopsInSupabase, createMitigationCapa, fetchCarriers, fetchCarrierPerformanceSummary, updateUserProfile } from './services/supabaseService';
+import { generateDefaultRiskFactors } from './utils/riskFactors';
 import { mapRowToTemperatureReading, mapRowToAlert } from './services/supabaseMappers';
 import {
   ShieldCheck,
@@ -85,8 +89,27 @@ export default function App() {
   const [gdpSnapshots, setGdpSnapshots] = useState<GdpComplianceSnapshot[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>(INITIAL_AUDIT_LOGS);
 
-  // User & Settings states
+  // Carrier directory + performance summary, fetched once and reused across every quick
+  // "recommended fix" surfaced next to a flagged lane (Simple Dashboard, Lane Management table)
+  // — the same recommendCarrier() engine the wizard uses, not a separate heuristic.
+  const [carriers, setCarriers] = useState<Carrier[]>([]);
+  const [carrierPerformanceById, setCarrierPerformanceById] = useState<Map<string, CarrierPerformanceSummary>>(new Map());
+  useEffect(() => {
+    fetchCarriers().then((c) => c && setCarriers(c));
+    fetchCarrierPerformanceSummary().then((rows) => {
+      if (rows) setCarrierPerformanceById(new Map(rows.map((r) => [r.carrierId, r])));
+    });
+  }, []);
+
+  // User identity: currentUser is always populated — either the real authenticated Supabase
+  // user, or the single canonical "Demo Visitor" persona (DEFAULT_SUPABASE_USER) when not
+  // authenticated. isAuthenticated is the one real signal for gating Advanced mode/cloud
+  // writes — there's no second, independently-tracked "active role persona" that can drift out
+  // of sync with it (that mismatch was a real identity-consistency bug: the sidebar and footer
+  // used to read from two different sources and could show two different names at once).
   const [currentUser, setCurrentUser] = useState<SupabaseUser>(getActiveUser());
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
+  const [authCheckComplete, setAuthCheckComplete] = useState<boolean>(false);
   const [settings, setSettings] = useState<SystemSettings>(() => {
     try {
       const saved = localStorage.getItem('pharmatrack_system_settings');
@@ -96,13 +119,19 @@ export default function App() {
     }
   });
 
-  // Active Role and Navigation Tab
-  const [activeRole, setActiveRole] = useState<UserRole>(() => {
-    const usr = getActiveUser();
-    return USER_ROLES.find(r => r.title.toLowerCase().includes(usr.role.toLowerCase().slice(0, 4))) || USER_ROLES[0];
-  });
   const [activeTab, setActiveTab] = useState<AppTab>('DASHBOARD');
   const [isMobileNavOpen, setIsMobileNavOpen] = useState<boolean>(false);
+
+  // The landing page is the actual first thing a cold visitor sees — shown before either the
+  // demo or a login form, since neither of those explains what this product is on its own.
+  const [hasEnteredApp, setHasEnteredApp] = useState<boolean>(false);
+
+  // Advanced mode (the Simple/Advanced dashboard toggle only — Lane Management/Compliance/Audit
+  // Trail stay reachable in Local Simulation, same as before this round) requires a real
+  // Supabase Auth session. pendingUnlockTarget remembers that the visitor was mid-attempt to
+  // reach Advanced mode so a successful sign-in lands them there instead of just the dashboard.
+  const [showPlanModal, setShowPlanModal] = useState<boolean>(false);
+  const [pendingUnlockTarget, setPendingUnlockTarget] = useState<'ADVANCED_MODE' | null>(null);
   
   const [filters, setFilters] = useState<FilterState>({
     searchQuery: '',
@@ -200,15 +229,18 @@ export default function App() {
         if (cancelled || !user) return;
         setCurrentUser(user);
         persistActiveUser(user);
-        const matchingRole = USER_ROLES.find(r => r.title.toLowerCase().includes(user.role.toLowerCase().slice(0, 4)));
-        if (matchingRole) setActiveRole(matchingRole);
+        setIsAuthenticated(true);
       })
-      .catch(err => console.warn('Failed to restore Supabase session:', err));
+      .catch(err => console.warn('Failed to restore Supabase session:', err))
+      .finally(() => {
+        if (!cancelled) setAuthCheckComplete(true);
+      });
 
     return () => {
       cancelled = true;
     };
   }, []);
+
 
   // Periodic IoT telemetry background simulation ticker — local demo mode only. When
   // connected to Supabase, real Realtime events (below) drive updates instead.
@@ -344,8 +376,8 @@ export default function App() {
     const newLog: AuditLogEntry = {
       id: `log-${Date.now()}`,
       timestamp: formatUtcCompact(new Date()),
-      actor: currentUser?.name || activeRole.name,
-      role: currentUser?.role || activeRole.title,
+      actor: currentUser.name,
+      role: currentUser.role,
       laneCode,
       action,
       category,
@@ -377,33 +409,57 @@ export default function App() {
   const handleUpdateUser = (updatedUser: SupabaseUser) => {
     setCurrentUser(updatedUser);
     persistActiveUser(updatedUser);
-    const matchingRole = USER_ROLES.find(r => r.title.toLowerCase().includes(updatedUser.role.toLowerCase().slice(0, 4)));
-    if (matchingRole) setActiveRole(matchingRole);
     appendAuditLog('AUTH', 'Updated Signatory Profile', 'SECURITY', `Signatory updated to ${updatedUser.name} (${updatedUser.role}).`);
+    // Fire-and-forget, matching every other cloud-only write in this app — name/organization
+    // edits previously only ever touched local React state, so they silently reverted on
+    // reload for a real cloud-connected user despite the audit trail claiming they were saved.
+    if (dataSource === 'cloud' && isAuthenticated) {
+      updateUserProfile(updatedUser.id, { fullName: updatedUser.name, organization: updatedUser.organization }).catch(() => {});
+    }
   };
 
   // Login Success handler
-  const handleLoginSuccess = (user: SupabaseUser, role?: UserRole) => {
+  const handleLoginSuccess = (user: SupabaseUser) => {
     setCurrentUser(user);
     persistActiveUser(user);
-    if (role) {
-      setActiveRole(role);
+    setIsAuthenticated(true);
+    if (pendingUnlockTarget === 'ADVANCED_MODE') {
+      setViewMode('advanced');
+      setPendingUnlockTarget(null);
     } else {
-      const matchingRole = USER_ROLES.find(r => r.title.toLowerCase().includes(user.role.toLowerCase().slice(0, 4)));
-      if (matchingRole) setActiveRole(matchingRole);
+      setActiveTab('DASHBOARD');
     }
-    setActiveTab('DASHBOARD');
     appendAuditLog('AUTH', 'User Authentication Success', 'SECURITY', `User authenticated as ${user.name} (${user.role}) via ${user.authProvider || 'Email/Password'}.`);
   };
 
-  // Sign out current user and return to login screen
+  // Sign out current user and return to Simple mode, unauthenticated — Advanced mode requires a
+  // real session, so signing out must drop back out of it, not leave it visibly unlocked.
   const handleLogout = () => {
-    appendAuditLog('AUTH', 'User Signed Out', 'SECURITY', `${currentUser?.name || activeRole.name} ended their authenticated session.`);
+    appendAuditLog('AUTH', 'User Signed Out', 'SECURITY', `${currentUser.name} ended their authenticated session.`);
     signOutFromSupabase().catch(() => {});
     persistActiveUser(DEFAULT_SUPABASE_USER);
     setCurrentUser(DEFAULT_SUPABASE_USER);
-    setActiveRole(USER_ROLES[0]);
-    setActiveTab('LOGIN');
+    setIsAuthenticated(false);
+    setViewMode('simple');
+    setActiveTab('DASHBOARD');
+  };
+
+  // The gate for Advanced mode specifically (the Simple/Advanced dashboard toggle) — a real
+  // Supabase session unlocks it directly, otherwise the plan-selection modal (not a real payment
+  // flow) leads into real sign-up/sign-in first. Lane Risk Management / Compliance / Audit Trail
+  // are NOT gated by this — those pages stay reachable in Local Simulation same as before, and
+  // gating them broke the demo-mode carrier-edit flow, so don't reintroduce that here.
+  const requestAdvancedAccess = (target: 'ADVANCED_MODE') => {
+    if (isAuthenticated) {
+      setViewMode('advanced');
+      return;
+    }
+    setPendingUnlockTarget(target);
+    setShowPlanModal(true);
+  };
+
+  const handleSwitchTab = (tab: AppTab) => {
+    setActiveTab(tab);
   };
 
   // Add new lane handler
@@ -460,6 +516,75 @@ export default function App() {
     }
   };
 
+  // Risk factors are never persisted server-side (see generateDefaultRiskFactors) — a lane
+  // fetched from Supabase arrives with risks: [] since there's no lane_risk_factors table, which
+  // otherwise left the Risk Assessment modal permanently empty for every real cloud lane. Called
+  // once by the modal when it opens a lane with no risks yet; a no-op if risks already exist
+  // (guards against a stale hydration racing a real update).
+  const handleHydrateRiskFactors = (laneId: string, risks: RiskFactor[]) => {
+    setLanes(prev => prev.map(l => (l.id === laneId && l.risks.length === 0 ? { ...l, risks } : l)));
+  };
+
+  // "Execute Mitigation" on a risk factor — the fixed dead-button bug. Always updates the risk's
+  // visible status and logs the action; Regulatory & GDP items additionally open a real CAPA
+  // (cloud: capa_records: local: an equivalent locally-synthesized record, so the flow is
+  // identical either way, just not durably saved outside cloud).
+  const handleExecuteMitigation = (laneId: string, risk: RiskFactor) => {
+    setLanes(prev => prev.map(l => (
+      l.id === laneId
+        ? { ...l, risks: l.risks.map(r => (r.id === risk.id ? { ...r, status: 'Mitigation Actioned' as const } : r)) }
+        : l
+    )));
+
+    const targetLane = lanes.find(l => l.id === laneId);
+    const laneCode = targetLane?.laneCode || laneId;
+    appendAuditLog(
+      laneCode,
+      `Mitigation Executed: ${risk.title}`,
+      'MITIGATION_EXECUTED',
+      risk.mitigationStrategy
+    );
+
+    if (risk.category !== 'Regulatory & GDP' || !targetLane) return;
+
+    if (dataSource === 'cloud') {
+      createMitigationCapa({
+        laneId,
+        laneCode,
+        route: `${targetLane.originCity} → ${targetLane.destinationCity}`,
+        riskTitle: risk.title,
+        riskDescription: risk.description,
+        mitigationStrategy: risk.mitigationStrategy,
+        severity: risk.severity,
+      }).catch(() => {});
+    } else {
+      // Local/demo equivalent — same shape as a real CapaRecord, added straight to the same
+      // capaRecords state the cloud fetch populates, so GDP Compliance Trend's "Open CAPAs"
+      // count and the Reporting modal's CAPA list reflect it identically either way.
+      const capaId = `CAPA-${new Date().getFullYear()}-M${Date.now().toString().slice(-6)}`;
+      setCapaRecords(prev => [
+        {
+          id: capaId,
+          capaNumber: capaId,
+          alertId: `local-${Date.now()}`,
+          laneCode,
+          title: risk.title,
+          description: risk.description,
+          rootCause: '',
+          correctiveAction: risk.mitigationStrategy,
+          preventiveAction: '',
+          owner: 'Unassigned',
+          status: 'Open',
+          priority: risk.severity,
+          dueDate: null,
+          closedDate: null,
+          createdAt: new Date().toISOString(),
+        },
+        ...prev,
+      ]);
+    }
+  };
+
   // Update a lane's intermediate stops from the Manage Route page
   const handleUpdateLaneStops = (laneId: string, stops: TransportLane['stops']) => {
     setLanes(prev => prev.map(l => (l.id === laneId ? { ...l, stops } : l)));
@@ -472,6 +597,12 @@ export default function App() {
         'LANE_CONFIGURATION',
         `Route for ${targetLane.laneCode} now has ${stops.length} intermediate stop${stops.length === 1 ? '' : 's'}.`
       );
+    }
+
+    // Fire-and-forget, matching every other cloud-only write in this app — a demo/local lane's
+    // id doesn't exist as a transport_lanes row, so this must never be attempted outside cloud.
+    if (dataSource === 'cloud') {
+      updateLaneStopsInSupabase(laneId, stops).catch(() => {});
     }
   };
 
@@ -492,6 +623,12 @@ export default function App() {
       'LANE_CONFIGURATION',
       `Route updated to ${updates.originIata} → ${updates.stops.map(s => s.iata).join(' → ')}${updates.stops.length ? ' → ' : ''}${updates.destinationIata} via ${updates.mode} (${updates.carrier}).`
     );
+
+    // Fire-and-forget, matching every other cloud-only write in this app — a demo/local lane's
+    // id doesn't exist as a transport_lanes row, so this must never be attempted outside cloud.
+    if (dataSource === 'cloud') {
+      updateLaneRouteInSupabase(laneId, updates).catch(() => {});
+    }
 
     if (certificationIssues.length > 0 && targetLane) {
       const newAlert: AlertNotification = {
@@ -551,7 +688,7 @@ export default function App() {
         return {
           ...a,
           isAcknowledged: true,
-          acknowledgedBy: activeRole.name,
+          acknowledgedBy: currentUser.name,
           acknowledgedAt: formatUtcCompactNoSeconds(new Date()),
         };
       }
@@ -564,7 +701,7 @@ export default function App() {
         foundAlert.laneCode,
         `Alert Acknowledged: ${foundAlert.title}`,
         'ALERT_ACKNOWLEDGED',
-        `Formally acknowledged by ${activeRole.name} (${activeRole.title}).`
+        `Formally acknowledged by ${currentUser.name} (${currentUser.role}).`
       );
     }
   };
@@ -669,6 +806,38 @@ export default function App() {
   // Light theme now applies everywhere — every component that used to be hardcoded dark reads
   // theme directly (see useThemeTokens). Simple/Advanced and light/dark are fully independent.
   const lightShell = theme === 'light';
+  // `mode` persists in localStorage, so a previously-Advanced session reloading while genuinely
+  // logged out would otherwise render Advanced dashboard content directly on mount, bypassing
+  // requestAdvancedAccess entirely (that gate only intercepts new attempts to switch mode, not
+  // a value already restored from storage). Every render of Advanced-mode-gated content reads
+  // this instead of the raw context value.
+  const effectiveViewMode = isAuthenticated ? viewMode : 'simple';
+
+  // `mode` persists in localStorage independently of auth state, so a browser that previously
+  // had Advanced mode selected would otherwise keep showing the TopBar's Advanced button as
+  // active — disagreeing with `effectiveViewMode` above, which forces Simple content once we
+  // know for certain (after the async session-restore check settles) that this load is
+  // genuinely logged out. Correcting the underlying `mode` value here, once, keeps every reader
+  // of `viewMode` (including TopBar's own separate context read) in agreement.
+  useEffect(() => {
+    if (authCheckComplete && !isAuthenticated && viewMode === 'advanced') {
+      setViewMode('simple');
+    }
+  }, [authCheckComplete, isAuthenticated, viewMode, setViewMode]);
+
+  if (!hasEnteredApp) {
+    return (
+      <LandingPage
+        lanes={lanes}
+        dataSource={dataSource}
+        onTryDemo={() => setHasEnteredApp(true)}
+        onSignIn={() => {
+          setHasEnteredApp(true);
+          setActiveTab('LOGIN');
+        }}
+      />
+    );
+  }
 
   return (
     <div className={`min-h-screen font-sans selection:bg-teal-500 selection:text-white flex ${lightShell ? 'bg-slate-50 text-slate-900' : 'bg-[#070d14] text-slate-100'}`}>
@@ -676,14 +845,14 @@ export default function App() {
       {/* Persistent Left Sidebar (desktop) */}
       <Sidebar
         activeTab={activeTab}
-        onSwitchTab={setActiveTab}
+        onSwitchTab={handleSwitchTab}
         onOpenNewLane={() => setIsNewLaneWizardOpen(true)}
         onOpenReports={() => setIsReportsModalOpen(true)}
         onOpenCloudSync={() => setIsCloudSyncOpen(true)}
         onOpenAssistant={() => setIsChatAssistantOpen(true)}
         onLogout={handleLogout}
         currentUser={currentUser}
-        activeRole={activeRole}
+        isAuthenticated={isAuthenticated}
       />
 
       {/* Mobile Sidebar Overlay */}
@@ -694,7 +863,7 @@ export default function App() {
             <Sidebar
               activeTab={activeTab}
               onSwitchTab={(tab) => {
-                setActiveTab(tab);
+                handleSwitchTab(tab);
                 setIsMobileNavOpen(false);
               }}
               onOpenNewLane={() => {
@@ -715,7 +884,7 @@ export default function App() {
               }}
               onLogout={handleLogout}
               currentUser={currentUser}
-              activeRole={activeRole}
+              isAuthenticated={isAuthenticated}
               className="flex flex-col h-full"
             />
           </div>
@@ -733,6 +902,8 @@ export default function App() {
           onOpenAlerts={() => setIsAlertsCenterOpen(true)}
           realtimeStatus={realtimeStatus}
           onOpenMobileNav={() => setIsMobileNavOpen(true)}
+          isAuthenticated={isAuthenticated}
+          onRequireAdvancedAuth={() => requestAdvancedAccess('ADVANCED_MODE')}
         />
 
         {/* Main Container */}
@@ -754,16 +925,18 @@ export default function App() {
           )}
 
         {/* TAB 1: Global Dashboard Overview */}
-        {activeTab === 'DASHBOARD' && viewMode === 'simple' && (
+        {activeTab === 'DASHBOARD' && effectiveViewMode === 'simple' && (
           <SimpleDashboard
             lanes={lanes}
             selectedLaneId={riskModalLane?.id || null}
             onSelectLane={(lane) => setRiskModalLane(lane)}
-            onGoAdvanced={() => setViewMode('advanced')}
+            onGoAdvanced={() => requestAdvancedAccess('ADVANCED_MODE')}
+            carriers={carriers}
+            carrierPerformanceById={carrierPerformanceById}
           />
         )}
 
-        {activeTab === 'DASHBOARD' && viewMode === 'advanced' && (
+        {activeTab === 'DASHBOARD' && effectiveViewMode === 'advanced' && (
           <div>
             {/* Narrow KPI column (ordered by importance) + large map, side by side */}
             <div className="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-5 mb-6 items-start">
@@ -820,6 +993,8 @@ export default function App() {
               onOpenNewLaneWizard={() => setIsNewLaneWizardOpen(true)}
               onManageStops={(lane) => setManageStopsLane(lane)}
               onEditLane={(lane) => setEditLaneLane(lane)}
+              carriers={carriers}
+              carrierPerformanceById={carrierPerformanceById}
             />
           </div>
         )}
@@ -850,6 +1025,8 @@ export default function App() {
               onOpenNewLaneWizard={() => setIsNewLaneWizardOpen(true)}
               onManageStops={(lane) => setManageStopsLane(lane)}
               onEditLane={(lane) => setEditLaneLane(lane)}
+              carriers={carriers}
+              carrierPerformanceById={carrierPerformanceById}
             />
           </div>
         )}
@@ -860,7 +1037,7 @@ export default function App() {
             <GdpComplianceTrend
               onOpenAuditReport={() => setIsReportsModalOpen(true)}
               snapshots={dataSource === 'cloud' ? gdpSnapshots : null}
-              capaRecords={dataSource === 'cloud' ? capaRecords : []}
+              capaRecords={capaRecords}
             />
             <AuditTrailView logs={auditLogs} />
           </div>
@@ -888,20 +1065,41 @@ export default function App() {
             isSimulating={isSimulating}
             onToggleSimulation={() => setIsSimulating(!isSimulating)}
             onTriggerSimulatedExcursion={handleTriggerSimulatedExcursion}
+            isAuthenticated={isAuthenticated}
+            dataSource={dataSource}
           />
         )}
 
-        {/* TAB 6: 21 CFR Part 11 Login & Persona Switcher */}
+        {/* TAB 6: Sign In / Register */}
         {activeTab === 'LOGIN' && (
           <div className="py-4">
             <LoginPage
               onLoginSuccess={handleLoginSuccess}
               currentUser={currentUser}
+              onCancel={() => {
+                setPendingUnlockTarget(null);
+                setActiveTab('DASHBOARD');
+              }}
             />
           </div>
         )}
 
       </main>
+
+      {/* Advanced-mode plan-selection gate — shown when a logged-out visitor tries to switch
+          from Simple to Advanced dashboard mode. */}
+      {showPlanModal && (
+        <PlanSelectionModal
+          onClose={() => {
+            setShowPlanModal(false);
+            setPendingUnlockTarget(null);
+          }}
+          onContinue={() => {
+            setShowPlanModal(false);
+            setActiveTab('LOGIN');
+          }}
+        />
+      )}
 
       {/* MODAL 1: Lane Risk Assessment & Risk Factor Selection Window */}
       {riskModalLane && (
@@ -922,6 +1120,8 @@ export default function App() {
             setEditLaneLane(l);
           }}
           onAddRiskFactor={handleAddRiskFactor}
+          onExecuteMitigation={handleExecuteMitigation}
+          onHydrateRiskFactors={handleHydrateRiskFactors}
         />
       )}
 
@@ -973,8 +1173,8 @@ export default function App() {
           lanes={lanes}
           alerts={alerts}
           logs={auditLogs}
-          capaRecords={dataSource === 'cloud' ? capaRecords : []}
-          activeRole={activeRole}
+          capaRecords={capaRecords}
+          currentUser={currentUser}
           onClose={() => setIsReportsModalOpen(false)}
         />
       )}
@@ -1022,7 +1222,7 @@ export default function App() {
         onCreateLane={() => setIsNewLaneWizardOpen(true)}
         onOpenAlerts={() => setIsAlertsCenterOpen(true)}
         onOpenSettings={() => setActiveTab('SETTINGS')}
-        onSwitchTab={(tab) => setActiveTab(tab)}
+        onSwitchTab={handleSwitchTab}
         onOpenAssistant={() => setIsChatAssistantOpen(true)}
       />
 
@@ -1031,7 +1231,6 @@ export default function App() {
         isOpen={isChatAssistantOpen}
         onClose={() => setIsChatAssistantOpen(false)}
         currentUser={currentUser}
-        activeRole={activeRole}
         dataSource={dataSource}
         onLaneCreated={handleLaneCreatedViaChat}
       />
@@ -1044,7 +1243,7 @@ export default function App() {
             <span>PharmaTrack Logistics Platform • Good Distribution Practice Compliant (GDP 2013/C 343/01)</span>
           </div>
           <div className="flex items-center gap-4 text-slate-400">
-            <span>Logged in as: <strong className={lightShell ? 'text-slate-900' : 'text-slate-200'}>{activeRole.name}</strong> ({activeRole.title})</span>
+            <span>{isAuthenticated ? 'Signed in as' : 'Viewing as'}: <strong className={lightShell ? 'text-slate-900' : 'text-slate-200'}>{currentUser.name}</strong> ({currentUser.role})</span>
             <span className="font-mono">
               {dataSource === 'cloud' ? `Supabase Cloud (${lanes.length} lanes)` : dataSource === 'local' ? 'Local Demo Dataset' : 'Connecting…'}
             </span>

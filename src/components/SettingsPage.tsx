@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Settings as SettingsIcon,
   Database,
@@ -27,7 +27,10 @@ import {
   Radio,
   AlertTriangle,
   Server,
-  Cloud
+  Cloud,
+  Upload,
+  UserCog,
+  ShieldAlert
 } from 'lucide-react';
 import {
   SystemSettings,
@@ -44,8 +47,13 @@ import {
   syncAllToSupabase,
   SUPABASE_SQL_MIGRATION,
   ASSISTANT_DEPLOYMENT_STEPS,
+  uploadAvatar,
+  fetchAllUserProfiles,
+  updateUserRole,
+  UserProfileSummary,
 } from '../services/supabaseService';
 import { useThemeTokens } from '../contexts/ViewModeContext';
+import { Avatar } from './Avatar';
 
 interface SettingsPageProps {
   settings: SystemSettings;
@@ -60,7 +68,12 @@ interface SettingsPageProps {
   isSimulating: boolean;
   onToggleSimulation: () => void;
   onTriggerSimulatedExcursion: () => void;
+  isAuthenticated: boolean;
+  dataSource: 'loading' | 'cloud' | 'local';
 }
+
+const ADMIN_ROLES: SupabaseUser['role'][] = ['Quality Lead', 'GDP Auditor'];
+const ALL_ROLES: SupabaseUser['role'][] = ['Quality Lead', 'Logistics Director', 'GDP Auditor', 'Supply Chain Analyst'];
 
 type SettingsTab = 'GENERAL' | 'SUPABASE' | 'GITHUB' | 'COMPLIANCE' | 'NOTIFICATIONS' | 'BACKUP';
 
@@ -86,14 +99,56 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   isSimulating,
   onToggleSimulation,
   onTriggerSimulatedExcursion,
+  isAuthenticated,
+  dataSource,
 }) => {
   const t = useThemeTokens();
   const [activeTab, setActiveTab] = useState<SettingsTab>('GENERAL');
+  const isAdmin = ADMIN_ROLES.includes(currentUser.role);
 
   // Local editable settings state
   const [localSettings, setLocalSettings] = useState<SystemSettings>({ ...settings });
   const [localUser, setLocalUser] = useState<SupabaseUser>({ ...currentUser });
   const [supabaseConfig, setSupabaseConfig] = useState<SupabaseSettings>(getSavedSupabaseConfig());
+
+  // Avatar upload
+  const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
+  const [avatarMessage, setAvatarMessage] = useState<string | null>(null);
+  const handleAvatarSelected = async (file: File) => {
+    setIsUploadingAvatar(true);
+    setAvatarMessage(null);
+    const result = await uploadAvatar(currentUser.id, file);
+    setIsUploadingAvatar(false);
+    setAvatarMessage(result.message);
+    if (result.success && result.avatarUrl) {
+      const updated = { ...currentUser, avatarUrl: result.avatarUrl };
+      onUpdateUser(updated);
+      setLocalUser(updated);
+    }
+  };
+
+  // Admin-only: manage other users' roles
+  const [userDirectory, setUserDirectory] = useState<UserProfileSummary[] | null>(null);
+  const [roleEdits, setRoleEdits] = useState<Record<string, SupabaseUser['role']>>({});
+  const [savingRoleFor, setSavingRoleFor] = useState<string | null>(null);
+  const [roleSaveMessage, setRoleSaveMessage] = useState<string | null>(null);
+  const loadUserDirectory = () => {
+    fetchAllUserProfiles().then((rows) => setUserDirectory(rows ?? []));
+  };
+  useEffect(() => {
+    if (isAdmin && dataSource === 'cloud' && activeTab === 'COMPLIANCE') loadUserDirectory();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAdmin, dataSource, activeTab]);
+  const handleSaveRole = async (userId: string) => {
+    const newRole = roleEdits[userId];
+    if (!newRole) return;
+    setSavingRoleFor(userId);
+    setRoleSaveMessage(null);
+    const result = await updateUserRole(userId, newRole);
+    setSavingRoleFor(null);
+    setRoleSaveMessage(result.message);
+    if (result.success) loadUserDirectory();
+  };
 
   // Feedback states
   const [isSaving, setIsSaving] = useState<boolean>(false);
@@ -699,7 +754,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                   Active User Profile & 21 CFR Part 11 Digital Signatures
                 </h2>
                 <p className={`text-xs ${t.textMuted}`}>
-                  Manage signature authentication PIN and regulatory audit trail sign-off parameters.
+                  Manage your display name, avatar, and signature authentication PIN.
                 </p>
               </div>
 
@@ -710,8 +765,36 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                   t.light ? 'bg-purple-100 text-purple-700 border-purple-300 hover:bg-purple-200' : 'bg-purple-500/20 text-purple-300 border-purple-500/30 hover:bg-purple-500/30'
                 }`}
               >
-                Switch Account / Sign In
+                {isAuthenticated ? 'Switch Account' : 'Sign In'}
               </button>
+            </div>
+
+            {/* Avatar */}
+            <div className={`flex items-center gap-4 pb-4 mb-4 border-b ${t.border}`}>
+              <Avatar name={currentUser.name} avatarUrl={currentUser.avatarUrl} size={56} />
+              <div className="flex-1">
+                <label
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-semibold cursor-pointer transition-all ${
+                    isAuthenticated
+                      ? t.light ? 'bg-teal-100 hover:bg-teal-200 text-teal-700 border-teal-300' : 'bg-teal-500/15 hover:bg-teal-500/25 text-teal-300 border-teal-500/30'
+                      : `${t.chipBg} ${t.textFaint} border-transparent cursor-not-allowed`
+                  }`}
+                >
+                  <Upload className="w-3.5 h-3.5" />
+                  <span>{isUploadingAvatar ? 'Uploading…' : 'Upload Avatar'}</span>
+                  <input
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp,image/gif"
+                    className="hidden"
+                    disabled={!isAuthenticated || isUploadingAvatar}
+                    onChange={(e) => e.target.files?.[0] && handleAvatarSelected(e.target.files[0])}
+                  />
+                </label>
+                <p className={`text-[11px] mt-1.5 ${t.textFaint}`}>
+                  {isAuthenticated ? 'PNG, JPEG, WebP, or GIF — 2MB max.' : 'Sign in to upload a real avatar.'}
+                </p>
+                {avatarMessage && <p className={`text-[11px] mt-1 ${t.textMuted}`}>{avatarMessage}</p>}
+              </div>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-4">
@@ -724,6 +807,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                   value={localUser.name}
                   onChange={(e) => setLocalUser(prev => ({ ...prev, name: e.target.value }))}
                   className={inputClass}
+                  disabled={!isAuthenticated}
                 />
               </div>
 
@@ -731,16 +815,15 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                 <label className={labelClass}>
                   Regulatory Role
                 </label>
-                <select
-                  value={localUser.role}
-                  onChange={(e) => setLocalUser(prev => ({ ...prev, role: e.target.value as any }))}
-                  className={inputClass}
-                >
-                  <option value="Quality Lead">Quality Lead (Sign-off Authority)</option>
-                  <option value="Logistics Director">Logistics Director</option>
-                  <option value="GDP Auditor">GDP Compliance Auditor</option>
-                  <option value="Supply Chain Analyst">Supply Chain Analyst</option>
-                </select>
+                {/* Read-only for yourself — role elevation is an admin action (see "Manage User
+                    Roles" below), never something you can grant yourself. This used to be a
+                    free-editable dropdown that only ever changed local React state, but it made
+                    the UI look like it granted real privilege even though the actual database
+                    write was already blocked — a confusing, misleading control either way. */}
+                <div className={`${inputClass} flex items-center justify-between cursor-default`}>
+                  <span>{currentUser.role}</span>
+                  <Lock className={`w-3 h-3 ${t.textFaint}`} />
+                </div>
               </div>
 
               <div>
@@ -752,6 +835,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                   value={localUser.organization}
                   onChange={(e) => setLocalUser(prev => ({ ...prev, organization: e.target.value }))}
                   className={inputClass}
+                  disabled={!isAuthenticated}
                 />
               </div>
             </div>
@@ -789,6 +873,84 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
               </div>
             </div>
           </div>
+
+          {/* Manage User Roles — admin-only, real (RLS-enforced) elevation, not a client-side
+              toggle. New accounts always start as Supply Chain Analyst; this is the only path
+              to a higher role. */}
+          {isAdmin && dataSource === 'cloud' && (
+            <div className={cardClass}>
+              <div className="flex items-center justify-between gap-3 mb-3">
+                <div>
+                  <h3 className={`text-xs font-bold flex items-center gap-1.5 ${t.textPrimary}`}>
+                    <UserCog className={`w-4 h-4 ${t.light ? 'text-purple-600' : 'text-purple-400'}`} />
+                    Manage User Roles
+                  </h3>
+                  <p className={`text-[11px] ${t.textMuted}`}>
+                    Visible because your account is {currentUser.role}. New registrations always start as Supply Chain
+                    Analyst — this is the only way to grant Quality Lead / Logistics Director / GDP Auditor access.
+                  </p>
+                </div>
+              </div>
+
+              {userDirectory === null ? (
+                <div className={`flex items-center gap-2 text-xs py-3 ${t.textMuted}`}>
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Loading registered users…
+                </div>
+              ) : userDirectory.length === 0 ? (
+                <p className={`text-xs py-2 ${t.textMuted}`}>No registered users found.</p>
+              ) : (
+                <div className="space-y-2">
+                  {userDirectory.map((u) => {
+                    const pendingRole = roleEdits[u.id] ?? u.role;
+                    const isDirty = pendingRole !== u.role;
+                    return (
+                      <div key={u.id} className={`flex flex-col sm:flex-row sm:items-center gap-2 p-2.5 rounded-lg border ${t.cardBgSunken} ${t.border}`}>
+                        <div className="flex items-center gap-2.5 flex-1 min-w-0">
+                          <Avatar name={u.fullName} size={28} />
+                          <div className="min-w-0">
+                            <div className={`text-xs font-semibold truncate ${t.textPrimary}`}>
+                              {u.fullName} {u.id === currentUser.id && <span className={t.textFaint}>(you)</span>}
+                            </div>
+                            <div className={`text-[10px] truncate ${t.textFaint}`}>{u.email}</div>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 flex-shrink-0">
+                          <select
+                            value={pendingRole}
+                            onChange={(e) => setRoleEdits((prev) => ({ ...prev, [u.id]: e.target.value as SupabaseUser['role'] }))}
+                            className={`text-xs px-2 py-1 rounded border ${t.cardBg} ${t.textSecondary} ${t.light ? 'border-slate-300' : 'border-slate-700'}`}
+                          >
+                            {ALL_ROLES.map((r) => (
+                              <option key={r} value={r}>{r}</option>
+                            ))}
+                          </select>
+                          <button
+                            type="button"
+                            onClick={() => handleSaveRole(u.id)}
+                            disabled={!isDirty || savingRoleFor === u.id}
+                            className={`px-2.5 py-1 rounded-lg border text-[11px] font-semibold transition-all disabled:opacity-40 disabled:cursor-not-allowed ${
+                              t.light ? 'bg-purple-100 hover:bg-purple-200 text-purple-700 border-purple-300' : 'bg-purple-500/15 hover:bg-purple-500/25 text-purple-300 border-purple-500/30'
+                            }`}
+                          >
+                            {savingRoleFor === u.id ? 'Saving…' : 'Update'}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {roleSaveMessage && <p className={`text-[11px] mt-2 ${t.textMuted}`}>{roleSaveMessage}</p>}
+            </div>
+          )}
+
+          {!isAdmin && isAuthenticated && (
+            <div className={`p-3 rounded-lg border text-[11px] flex items-start gap-2 ${t.cardBgSunken} ${t.border} ${t.textMuted}`}>
+              <ShieldAlert className={`w-3.5 h-3.5 flex-shrink-0 mt-0.5 ${t.textFaint}`} />
+              <span>Your role ({currentUser.role}) can't manage other users. Ask an existing Quality Lead or GDP Auditor to grant a higher role if you need one.</span>
+            </div>
+          )}
 
           {/* Cryptographic Hash Verification */}
           <div className={cardClass}>

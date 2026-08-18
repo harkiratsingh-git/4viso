@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Plane,
   Ship,
@@ -24,9 +25,10 @@ import {
   Rows3,
   Rows4,
 } from 'lucide-react';
-import { TransportLane, TransportMode, RiskLevel } from '../types';
+import { Carrier, CarrierPerformanceSummary, TransportLane, TransportMode, RiskLevel } from '../types';
 import { getRiskColor, getStatusColor, getGdpBadge, formatCurrency } from '../utils/formatters';
 import { getEffectiveRiskLevel, getEffectiveRiskScore } from '../utils/laneRisk';
+import { getQuickRecommendation } from '../utils/quickRecommendation';
 import { TemperatureSparkline } from './TemperatureSparkline';
 import { useThemeTokens } from '../contexts/ViewModeContext';
 
@@ -53,6 +55,8 @@ interface LaneManagementTableProps {
   onOpenNewLaneWizard: () => void;
   onManageStops: (lane: TransportLane) => void;
   onEditLane: (lane: TransportLane) => void;
+  carriers: Carrier[];
+  carrierPerformanceById: Map<string, CarrierPerformanceSummary>;
 }
 
 export const LaneManagementTable: React.FC<LaneManagementTableProps> = ({
@@ -63,6 +67,8 @@ export const LaneManagementTable: React.FC<LaneManagementTableProps> = ({
   onOpenNewLaneWizard,
   onManageStops,
   onEditLane,
+  carriers,
+  carrierPerformanceById,
 }) => {
   const t = useThemeTokens();
   const [activeTab, setActiveTab] = useState<'ALL' | TransportMode>('ALL');
@@ -77,17 +83,56 @@ export const LaneManagementTable: React.FC<LaneManagementTableProps> = ({
 
   // Hick's Law: only one primary action ("Assess Risks") stays visible per row; Edit / Manage
   // Stops / Live Telemetry move into a single overflow menu.
+  //
+  // Rendered via a portal to document.body, positioned with `fixed` + a measured bounding rect,
+  // rather than `absolute` inside the table's own markup — the table wrapper below is
+  // `overflow-x-auto`, and per the CSS spec setting only overflow-x forces overflow-y to an
+  // implicit non-visible value too, so an `absolute` dropdown nested inside it gets silently
+  // clipped by that wrapper's bottom edge for most rows. That's the actual "the menu doesn't do
+  // anything when clicked" bug — it was opening and immediately being clipped to nothing.
   const [openMenuLaneId, setOpenMenuLaneId] = useState<string | null>(null);
+  const [menuPosition, setMenuPosition] = useState<{ top: number; right: number } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const toggleButtonRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
+
+  const toggleMenu = (laneId: string, button: HTMLButtonElement) => {
+    if (openMenuLaneId === laneId) {
+      setOpenMenuLaneId(null);
+      setMenuPosition(null);
+      return;
+    }
+    const rect = button.getBoundingClientRect();
+    setMenuPosition({ top: rect.bottom + 4, right: window.innerWidth - rect.right });
+    setOpenMenuLaneId(laneId);
+  };
+
+  const closeMenu = () => {
+    setOpenMenuLaneId(null);
+    setMenuPosition(null);
+  };
+
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setOpenMenuLaneId(null);
-      }
+      const target = e.target as Node;
+      if (menuRef.current?.contains(target)) return;
+      const toggleButton = openMenuLaneId ? toggleButtonRefs.current.get(openMenuLaneId) : null;
+      if (toggleButton?.contains(target)) return;
+      closeMenu();
+    }
+    // Capture phase so a scroll on the table's inner overflow-x-auto container (scroll events
+    // don't bubble) still closes a menu whose fixed-position coordinates would otherwise go stale.
+    function handleScroll() {
+      closeMenu();
     }
     document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
+    document.addEventListener('scroll', handleScroll, true);
+    window.addEventListener('resize', closeMenu);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('scroll', handleScroll, true);
+      window.removeEventListener('resize', closeMenu);
+    };
+  }, [openMenuLaneId]);
 
   const filteredByTab = lanes.filter(l => {
     if (activeTab === 'ALL') return true;
@@ -259,6 +304,7 @@ export const LaneManagementTable: React.FC<LaneManagementTableProps> = ({
                 const statusStyles = getStatusColor(lane.status, t.light);
                 const gdpBadge = getGdpBadge(lane.gdpStatus, t.light);
                 const isTempExcursion = lane.currentTemp > lane.tempMax || lane.currentTemp < lane.tempMin;
+                const recommendation = getQuickRecommendation(lane, carriers, carrierPerformanceById);
 
                 return (
                   <tr
@@ -369,7 +415,7 @@ export const LaneManagementTable: React.FC<LaneManagementTableProps> = ({
                     </td>
 
                     {/* Composite Risk Score */}
-                    <td className={`${rowPad} px-4`}>
+                    <td className={`${rowPad} px-4 max-w-[220px]`}>
                       <div className="flex items-center gap-2">
                         <div className={`w-12 h-2 rounded-full overflow-hidden ${t.chipBg}`}>
                           <div
@@ -385,6 +431,11 @@ export const LaneManagementTable: React.FC<LaneManagementTableProps> = ({
                           {effectiveRiskScore}% {effectiveRiskLevel}
                         </span>
                       </div>
+                      {recommendation && (
+                        <div className={`text-[10px] mt-1 leading-snug truncate ${t.light ? 'text-teal-700' : 'text-teal-300'}`} title={recommendation.headline}>
+                          Fix: {recommendation.headline}
+                        </div>
+                      )}
                     </td>
 
                     {/* Status Badge */}
@@ -410,7 +461,11 @@ export const LaneManagementTable: React.FC<LaneManagementTableProps> = ({
                         </button>
 
                         <button
-                          onClick={() => setOpenMenuLaneId(openMenuLaneId === lane.id ? null : lane.id)}
+                          ref={(el) => {
+                            if (el) toggleButtonRefs.current.set(lane.id, el);
+                            else toggleButtonRefs.current.delete(lane.id);
+                          }}
+                          onClick={(e) => toggleMenu(lane.id, e.currentTarget)}
                           className={`min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg border transition-colors ${
                             t.light ? 'bg-slate-100 hover:bg-slate-200 text-slate-600 hover:text-slate-900 border-slate-200' : 'bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border-slate-700'
                           }`}
@@ -421,17 +476,18 @@ export const LaneManagementTable: React.FC<LaneManagementTableProps> = ({
                           <MoreVertical className="w-4 h-4" />
                         </button>
 
-                        {openMenuLaneId === lane.id && (
+                        {openMenuLaneId === lane.id && menuPosition && createPortal(
                           <div
                             ref={menuRef}
-                            className={`absolute right-4 top-full mt-1 w-56 rounded-lg shadow-2xl z-30 py-1 text-left animate-in fade-in zoom-in-95 duration-100 border ${
+                            style={{ position: 'fixed', top: menuPosition.top, right: menuPosition.right }}
+                            className={`w-56 rounded-lg shadow-2xl z-[100] py-1 text-left animate-in fade-in zoom-in-95 duration-100 border ${
                               t.light ? 'bg-white border-slate-300' : 'bg-slate-950 border-slate-700'
                             }`}
                           >
                             <button
                               onClick={() => {
                                 onEditLane(lane);
-                                setOpenMenuLaneId(null);
+                                closeMenu();
                               }}
                               className={`w-full min-h-[40px] px-3 flex items-center gap-2.5 text-[12px] transition-colors ${
                                 t.light ? 'text-slate-700 hover:bg-slate-100' : 'text-slate-200 hover:bg-slate-800'
@@ -443,7 +499,7 @@ export const LaneManagementTable: React.FC<LaneManagementTableProps> = ({
                             <button
                               onClick={() => {
                                 onManageStops(lane);
-                                setOpenMenuLaneId(null);
+                                closeMenu();
                               }}
                               className={`w-full min-h-[40px] px-3 flex items-center gap-2.5 text-[12px] transition-colors ${
                                 t.light ? 'text-slate-700 hover:bg-slate-100' : 'text-slate-200 hover:bg-slate-800'
@@ -455,7 +511,7 @@ export const LaneManagementTable: React.FC<LaneManagementTableProps> = ({
                             <button
                               onClick={() => {
                                 onOpenTempMonitor(lane);
-                                setOpenMenuLaneId(null);
+                                closeMenu();
                               }}
                               className={`w-full min-h-[40px] px-3 flex items-center gap-2.5 text-[12px] transition-colors ${
                                 t.light ? 'text-slate-700 hover:bg-slate-100' : 'text-slate-200 hover:bg-slate-800'
@@ -464,7 +520,8 @@ export const LaneManagementTable: React.FC<LaneManagementTableProps> = ({
                               <Activity className={`w-3.5 h-3.5 flex-shrink-0 ${t.light ? 'text-teal-500' : 'text-teal-400'}`} />
                               <span>View Live Temperature Telemetry</span>
                             </button>
-                          </div>
+                          </div>,
+                          document.body
                         )}
                       </div>
                     </td>

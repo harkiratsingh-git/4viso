@@ -33,15 +33,21 @@ export const DEFAULT_SUPABASE_CONFIG: SupabaseSettings = {
   autoSyncEnabled: true,
 };
 
+/**
+ * The identity shown when genuinely not authenticated (Local Simulation) — deliberately a
+ * generic placeholder, not a real person. This used to be a hardcoded real name/email/avatar
+ * (the app owner's own), shown to every anonymous visitor as if they were a signed-in Quality
+ * Lead — both an identity-consistency bug (it disagreed with the separate role-persona display
+ * elsewhere) and a real person's PII displayed to every stranger who never authenticated.
+ * `authProvider` is deliberately left unset here since 'None' isn't a real provider name.
+ */
 export const DEFAULT_SUPABASE_USER: SupabaseUser = {
-  id: 'usr-gdp-lead-01',
-  email: 'harkiratdhanoa44@gmail.com',
-  name: 'Harkirat Dhanoa',
-  role: 'Quality Lead',
-  organization: 'Global BioPharma Supply Chain Corp',
-  createdAt: '2026-08-15T00:00:00Z',
-  avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&h=100&fit=crop&crop=faces',
-  authProvider: 'Supabase Cloud Auth'
+  id: 'demo-visitor',
+  email: '',
+  name: 'Demo Visitor',
+  role: 'Supply Chain Analyst',
+  organization: 'Local Simulation',
+  createdAt: new Date(0).toISOString(),
 };
 
 let clientInstance: SupabaseClient | null = null;
@@ -622,6 +628,77 @@ export async function insertLaneToSupabase(lane: TransportLane): Promise<boolean
   return true;
 }
 
+export interface LaneRouteUpdate {
+  originCity: string; originIata: string; originCountry: string; originCoords: [number, number];
+  destinationCity: string; destinationIata: string; destinationCountry: string; destinationCoords: [number, number];
+  stops: TransportLane['stops'];
+  mode: TransportLane['mode'];
+  carrier: string;
+  productName: string;
+  productCategory: TransportLane['productCategory'];
+  tempRangeType: TransportLane['tempRangeType'];
+  tempMin: number;
+  tempMax: number;
+}
+
+/**
+ * Persists an Edit Lane (emergency reroute / carrier / cargo change) to transport_lanes. This
+ * was entirely missing — the Edit Lane modal only ever updated local React state, so a
+ * cloud-connected session's reroute existed solely in that browser tab's memory (reverted on
+ * reload) even though the audit trail entry describing it was real and permanent. Caller is
+ * responsible for the dataSource === 'cloud' gate, matching every other cloud-only write in
+ * this app.
+ */
+export async function updateLaneRouteInSupabase(laneId: string, updates: LaneRouteUpdate): Promise<boolean> {
+  const client = getSupabaseClient();
+  if (!client) return false;
+  const { error } = await client
+    .from('transport_lanes')
+    .update({
+      origin_city: updates.originCity,
+      origin_iata: updates.originIata,
+      origin_country: updates.originCountry,
+      origin_lat: updates.originCoords[0],
+      origin_lng: updates.originCoords[1],
+      destination_city: updates.destinationCity,
+      destination_iata: updates.destinationIata,
+      destination_country: updates.destinationCountry,
+      destination_lat: updates.destinationCoords[0],
+      destination_lng: updates.destinationCoords[1],
+      stops: updates.stops,
+      mode: updates.mode,
+      carrier: updates.carrier,
+      product_name: updates.productName,
+      product_category: updates.productCategory,
+      temp_range_type: updates.tempRangeType,
+      temp_min: updates.tempMin,
+      temp_max: updates.tempMax,
+      last_updated: new Date().toISOString(),
+    })
+    .eq('id', laneId);
+  if (error) {
+    console.warn('transport_lanes route update notice:', error.message);
+    return false;
+  }
+  return true;
+}
+
+/** Persists a Manage Route Stops change to transport_lanes.stops — same missing-persistence gap
+ *  as updateLaneRouteInSupabase, for the narrower "just the stops" edit flow. */
+export async function updateLaneStopsInSupabase(laneId: string, stops: TransportLane['stops']): Promise<boolean> {
+  const client = getSupabaseClient();
+  if (!client) return false;
+  const { error } = await client
+    .from('transport_lanes')
+    .update({ stops, last_updated: new Date().toISOString() })
+    .eq('id', laneId);
+  if (error) {
+    console.warn('transport_lanes stops update notice:', error.message);
+    return false;
+  }
+  return true;
+}
+
 // Read lanes, alerts, audit trail, and recent telemetry back from Supabase. Returns null
 // (rather than throwing) when there's no client configured or the core lanes table can't be
 // read, so callers can cleanly fall back to local demo data.
@@ -680,6 +757,47 @@ async function fetchProfileRow(client: SupabaseClient, id: string, email: string
   return byEmail.data || null;
 }
 
+/**
+ * Self-heals a missing user_profiles row on sign-in — signUpWithEmail's own upsert only has a
+ * real session to authenticate with when email confirmation is disabled; when confirmation is
+ * required (the common case), that upsert silently runs unauthenticated and is rejected by RLS,
+ * so the row genuinely doesn't exist yet by the time the user first signs in. Always inserts the
+ * lowest-privilege default — this must never touch an existing row (an admin may have already
+ * elevated it), so it's a plain INSERT gated on "row doesn't exist yet", not an upsert.
+ */
+async function ensureProfileRow(client: SupabaseClient, authUser: { id: string; email?: string | null; user_metadata?: any }, existing: any | null): Promise<any | null> {
+  if (existing) return existing;
+  const meta = authUser.user_metadata || {};
+  const { data, error } = await client
+    .from('user_profiles')
+    .insert({
+      id: authUser.id,
+      email: authUser.email || '',
+      full_name: meta.full_name || (authUser.email || '').split('@')[0],
+      role: 'Supply Chain Analyst',
+      organization: meta.organization || 'Unassigned Organization',
+    })
+    .select('*')
+    .maybeSingle();
+  if (error) {
+    console.warn('user_profiles self-heal insert notice:', error.message);
+    return null;
+  }
+  return data;
+}
+
+/**
+ * `user_metadata` on the Supabase Auth user (authUser.user_metadata) is NOT a trustworthy
+ * source for role/privilege — it's editable by the user themselves via a plain
+ * `supabase.auth.updateUser({ data: {...} })` call, which no RLS policy can restrict (RLS only
+ * governs table rows, not the auth.users JWT claims). The only authoritative source for role is
+ * user_profiles.role, which the "Update own profile" RLS policy now blocks a user from changing
+ * on themselves. So this deliberately does NOT fall back to meta.role for `role` — a missing
+ * profile row means the lowest-privilege default, never whatever the signup metadata claims.
+ * (Non-privilege display fields like full_name/organization are low-stakes enough to still take
+ * the metadata as a fallback purely for a smoother first-run display before the profile row
+ * exists.)
+ */
 function buildUserFromAuth(authUser: { id: string; email?: string | null; created_at?: string; user_metadata?: any }, profileRow: any | null): SupabaseUser {
   const email = authUser.email || profileRow?.email || '';
   const meta = authUser.user_metadata || {};
@@ -687,7 +805,7 @@ function buildUserFromAuth(authUser: { id: string; email?: string | null; create
     id: authUser.id,
     email,
     name: profileRow?.full_name || meta.full_name || email.split('@')[0],
-    role: (profileRow?.role || meta.role || 'Supply Chain Analyst') as SupabaseUser['role'],
+    role: (profileRow?.role || 'Supply Chain Analyst') as SupabaseUser['role'],
     organization: profileRow?.organization || meta.organization || 'Unassigned Organization',
     createdAt: authUser.created_at || new Date().toISOString(),
     avatarUrl: profileRow?.avatar_url || undefined,
@@ -702,10 +820,17 @@ export interface AuthResult {
   user?: SupabaseUser;
 }
 
+/**
+ * `role` is deliberately not part of the public signup profile — every new account starts as
+ * 'Supply Chain Analyst' (see the "Create own profile" RLS policy, which now rejects any other
+ * value on insert). Elevation to Quality Lead/GDP Auditor is an admin-only action performed by
+ * an existing Quality Lead/GDP Auditor from Settings, never something a new signup can choose
+ * for themselves.
+ */
 export async function signUpWithEmail(
   email: string,
   password: string,
-  profile: { fullName: string; role: SupabaseUser['role']; organization: string }
+  profile: { fullName: string; organization: string }
 ): Promise<AuthResult> {
   const client = getSupabaseClient();
   if (!client) return { success: false, message: 'Supabase is not configured. Add your project URL and anon key in Settings.' };
@@ -714,7 +839,7 @@ export async function signUpWithEmail(
     email,
     password,
     options: {
-      data: { full_name: profile.fullName, role: profile.role, organization: profile.organization },
+      data: { full_name: profile.fullName, organization: profile.organization },
     },
   });
 
@@ -724,20 +849,18 @@ export async function signUpWithEmail(
   const needsEmailConfirmation = !data.session;
 
   // Best-effort mirror into user_profiles so the rest of the app (which only reads that
-  // table) can see this person. Never block the auth result on this succeeding.
+  // table) can see this person. Only succeeds here when email confirmation is disabled (a real
+  // session exists immediately) — otherwise ensureProfileRow on first sign-in creates it instead.
   try {
-    await client.from('user_profiles').upsert(
-      {
-        id: data.user.id,
-        email,
-        full_name: profile.fullName,
-        role: profile.role,
-        organization: profile.organization,
-      },
-      { onConflict: 'id' }
-    );
+    await client.from('user_profiles').insert({
+      id: data.user.id,
+      email,
+      full_name: profile.fullName,
+      role: 'Supply Chain Analyst',
+      organization: profile.organization,
+    });
   } catch {
-    // non-fatal
+    // non-fatal — ensureProfileRow on sign-in covers this
   }
 
   return {
@@ -758,7 +881,8 @@ export async function signInWithEmail(email: string, password: string): Promise<
   if (error) return { success: false, message: error.message };
   if (!data.user) return { success: false, message: 'Sign-in failed for an unknown reason.' };
 
-  const profileRow = await fetchProfileRow(client, data.user.id, email).catch(() => null);
+  const existing = await fetchProfileRow(client, data.user.id, email).catch(() => null);
+  const profileRow = await ensureProfileRow(client, data.user, existing).catch(() => existing);
   return { success: true, message: 'Signed in.', user: buildUserFromAuth(data.user, profileRow) };
 }
 
@@ -790,8 +914,101 @@ export async function restoreSupabaseSession(): Promise<SupabaseUser | null> {
   const authUser = data.session?.user;
   if (!authUser) return null;
 
-  const profileRow = await fetchProfileRow(client, authUser.id, authUser.email || '').catch(() => null);
+  const existing = await fetchProfileRow(client, authUser.id, authUser.email || '').catch(() => null);
+  const profileRow = await ensureProfileRow(client, authUser, existing).catch(() => existing);
   return buildUserFromAuth(authUser, profileRow);
+}
+
+export interface UserProfileSummary {
+  id: string;
+  email: string;
+  fullName: string;
+  role: SupabaseUser['role'];
+  organization: string;
+}
+
+function mapRowToUserProfileSummary(row: any): UserProfileSummary {
+  return {
+    id: String(row.id),
+    email: String(row.email || ''),
+    fullName: String(row.full_name || row.email || 'Unknown'),
+    role: row.role as SupabaseUser['role'],
+    organization: String(row.organization || ''),
+  };
+}
+
+/** Every registered user — "Read all profiles" is open to any authenticated user, so the
+ *  Settings role-management panel gates who sees it client-side; the actual elevation write
+ *  below is the real (RLS-enforced) gate. */
+export async function fetchAllUserProfiles(): Promise<UserProfileSummary[] | null> {
+  const client = getSupabaseClient();
+  if (!client) return null;
+  const { data, error } = await client.from('user_profiles').select('*').order('full_name', { ascending: true });
+  if (error || !data) {
+    console.warn('user_profiles list fetch notice:', error?.message);
+    return null;
+  }
+  return data.map(mapRowToUserProfileSummary);
+}
+
+/**
+ * Role elevation — only succeeds when the caller is themselves a Quality Lead/GDP Auditor, per
+ * the "Admins can update any profile" RLS policy; a non-admin caller gets an RLS rejection here,
+ * not a client-side-only block.
+ */
+export async function updateUserRole(userId: string, newRole: SupabaseUser['role']): Promise<{ success: boolean; message: string }> {
+  const client = getSupabaseClient();
+  if (!client) return { success: false, message: 'Not connected to Supabase.' };
+  const { error } = await client.from('user_profiles').update({ role: newRole }).eq('id', userId);
+  if (error) return { success: false, message: error.message };
+  return { success: true, message: 'Role updated.' };
+}
+
+/** Self-service profile update (display name, organization) — deliberately does not accept
+ *  `role`; that field is only ever changed via updateUserRole, which the RLS "Admins can
+ *  update any profile" policy actually enforces server-side. */
+export async function updateUserProfile(userId: string, updates: { fullName: string; organization: string }): Promise<{ success: boolean; message: string }> {
+  const client = getSupabaseClient();
+  if (!client) return { success: false, message: 'Not connected to Supabase.' };
+  const { error } = await client.from('user_profiles').update({ full_name: updates.fullName, organization: updates.organization }).eq('id', userId);
+  if (error) return { success: false, message: error.message };
+  return { success: true, message: 'Profile updated.' };
+}
+
+const AVATAR_MAX_BYTES = 2 * 1024 * 1024;
+const AVATAR_ALLOWED_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'];
+
+/**
+ * Uploads to the `avatars` storage bucket at `<user-id>/avatar.<ext>` — the path itself is what
+ * the "own folder" RLS policy checks (storage.foldername(name)[1] = auth.uid()), so a user can
+ * only ever write to their own avatar path. `upsert: true` so re-uploading replaces the same
+ * object rather than accumulating orphaned files.
+ */
+export async function uploadAvatar(userId: string, file: File): Promise<{ success: boolean; avatarUrl?: string; message: string }> {
+  const client = getSupabaseClient();
+  if (!client) return { success: false, message: 'Not connected to Supabase.' };
+
+  if (!AVATAR_ALLOWED_TYPES.includes(file.type)) {
+    return { success: false, message: 'Unsupported file type — use PNG, JPEG, WebP, or GIF.' };
+  }
+  if (file.size > AVATAR_MAX_BYTES) {
+    return { success: false, message: 'File too large — 2MB maximum.' };
+  }
+
+  const ext = file.name.split('.').pop()?.toLowerCase() || 'png';
+  const path = `${userId}/avatar.${ext}`;
+  const { error: uploadError } = await client.storage.from('avatars').upload(path, file, { upsert: true, cacheControl: '3600' });
+  if (uploadError) return { success: false, message: uploadError.message };
+
+  const { data: publicUrlData } = client.storage.from('avatars').getPublicUrl(path);
+  // Cache-bust — re-uploading keeps the same path, so without this the browser (and any CDN
+  // cache) would keep showing the old image at that URL.
+  const avatarUrl = `${publicUrlData.publicUrl}?t=${Date.now()}`;
+
+  const { error: profileError } = await client.from('user_profiles').update({ avatar_url: avatarUrl }).eq('id', userId);
+  if (profileError) return { success: false, message: `Uploaded but failed to save to profile: ${profileError.message}` };
+
+  return { success: true, avatarUrl, message: 'Avatar updated.' };
 }
 
 /**
@@ -1272,6 +1489,64 @@ export async function reportLaneDisruption(input: ReportDisruptionInput): Promis
   if (disruptionError || !data) return { success: false, message: `Disruption record failed: ${disruptionError?.message}` };
 
   return { success: true, disruption: mapRowToLaneDisruption(data), message: 'Disruption reported and CAPA opened.' };
+}
+
+export interface MitigationCapaInput {
+  laneId: string;
+  laneCode: string;
+  route: string;
+  riskTitle: string;
+  riskDescription: string;
+  mitigationStrategy: string;
+  severity: RiskLevel;
+}
+
+/**
+ * "Execute Mitigation" on a Regulatory & GDP risk factor opens a real CAPA, the same way
+ * reportLaneDisruption does for a carrier disruption — capa_records.alert_id is NOT NULL + FK'd
+ * to alert_notifications, so a standalone CAPA isn't possible; this creates the backing
+ * GDP_BREACH alert first, same sequencing (alert -> capa).
+ */
+export async function createMitigationCapa(input: MitigationCapaInput): Promise<{ success: boolean; capaId?: string; message: string }> {
+  const client = getSupabaseClient();
+  if (!client) return { success: false, message: 'Not connected to Supabase.' };
+
+  const now = new Date().toISOString();
+  const alertId = `ALT-MITIGATION-${Date.now()}`;
+  const alertSeverity = input.severity === 'Critical' || input.severity === 'High' ? 'Critical' : input.severity === 'Medium' ? 'Warning' : 'Info';
+  const { error: alertError } = await client.from('alert_notifications').insert({
+    id: alertId,
+    lane_id: input.laneId,
+    lane_code: input.laneCode,
+    route: input.route,
+    timestamp: now,
+    alert_type: 'GDP_BREACH',
+    severity: alertSeverity,
+    title: input.riskTitle,
+    message: input.riskDescription,
+    current_value: input.severity,
+    threshold_value: 'GDP 2013/C 343/01',
+    is_acknowledged: false,
+    capa_required: true,
+  });
+  if (alertError) return { success: false, message: `Alert creation failed: ${alertError.message}` };
+
+  const capaId = `CAPA-${new Date().getFullYear()}-M${Date.now().toString().slice(-6)}`;
+  const { error: capaError } = await client.from('capa_records').insert({
+    id: capaId,
+    capa_number: capaId,
+    alert_id: alertId,
+    lane_code: input.laneCode,
+    title: input.riskTitle,
+    description: input.riskDescription,
+    corrective_action: input.mitigationStrategy,
+    owner: 'Unassigned',
+    status: 'Open',
+    priority: input.severity,
+  });
+  if (capaError) return { success: false, message: `CAPA creation failed: ${capaError.message}` };
+
+  return { success: true, capaId, message: 'CAPA opened and logged to audit trail.' };
 }
 
 /** Wraps the can_extend_carrier_contract(leg_id) RPC — per spec, this is an eligibility gate

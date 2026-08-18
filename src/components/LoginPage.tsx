@@ -8,112 +8,22 @@ import {
   CheckCircle2,
   AlertCircle,
   UserCheck,
-  Sparkles,
   Eye,
   EyeOff,
   Building2,
   Fingerprint,
   RefreshCw,
-  ChevronRight,
+  Users,
 } from 'lucide-react';
-import { SupabaseUser, UserRole } from '../types';
+import { SupabaseUser } from '../types';
 import { signInWithEmail, signUpWithEmail, sendPasswordReset } from '../services/supabaseService';
 import { useThemeTokens } from '../contexts/ViewModeContext';
 
 interface LoginPageProps {
-  onLoginSuccess: (user: SupabaseUser, role?: UserRole) => void;
+  onLoginSuccess: (user: SupabaseUser) => void;
   onCancel?: () => void;
   currentUser?: SupabaseUser | null;
 }
-
-export const DEMO_ACCOUNTS: Array<{
-  user: SupabaseUser;
-  role: UserRole;
-  passwordHint: string;
-  description: string;
-  badgeColor: string;
-}> = [
-  {
-    user: {
-      id: 'usr-quality-01',
-      name: 'Dr. Elena Rostova',
-      email: 'elena.rostova@biopharma-coldchain.com',
-      role: 'Quality Lead',
-      organization: 'Global BioPharma Quality Operations',
-      createdAt: '2026-01-10T08:00:00Z',
-      avatarUrl: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=120&h=120&fit=crop&crop=faces'
-    },
-    role: {
-      id: 'quality',
-      title: 'VP of Quality Assurance',
-      department: 'QA & Regulatory Affairs',
-      name: 'Dr. Elena Rostova'
-    },
-    passwordHint: 'BioPharma2026!QA',
-    description: '21 CFR Part 11 Electronic Signature Authority, CAPA signoffs, and GDP release permissions.',
-    badgeColor: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
-  },
-  {
-    user: {
-      id: 'usr-logistics-02',
-      name: 'Marcus Vance',
-      email: 'm.vance@coldchain-logistics.net',
-      role: 'Logistics Director',
-      organization: 'Trans-Global Cold-Chain Logistics',
-      createdAt: '2026-02-14T09:30:00Z',
-      avatarUrl: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=120&h=120&fit=crop&crop=faces'
-    },
-    role: {
-      id: 'logistics',
-      title: 'Global Logistics Director',
-      department: 'Global Freight & Fleet Ops',
-      name: 'Marcus Vance'
-    },
-    passwordHint: 'FleetCold2026!Log',
-    description: 'Lane configuration, carrier SLA dispatch, active shipment rerouting, and packaging overrides.',
-    badgeColor: 'bg-teal-500/20 text-teal-300 border-teal-500/40'
-  },
-  {
-    user: {
-      id: 'usr-auditor-03',
-      name: 'Sarah Jenkins',
-      email: 's.jenkins@eudra-gdp-audit.org',
-      role: 'GDP Auditor',
-      organization: 'EudraLex & WHO External Audit Body',
-      createdAt: '2026-03-01T11:15:00Z',
-      avatarUrl: 'https://images.unsplash.com/photo-1580489944761-15a19d654956?w=120&h=120&fit=crop&crop=faces'
-    },
-    role: {
-      id: 'auditor',
-      title: 'Lead GDP Compliance Auditor',
-      department: 'Compliance & Audit Integrity',
-      name: 'Sarah Jenkins'
-    },
-    passwordHint: 'Audit2026!Eudra',
-    description: 'Read-only access to immutable audit hashes, excursion investigation logs, and compliance certificates.',
-    badgeColor: 'bg-sky-500/20 text-sky-300 border-sky-500/40'
-  },
-  {
-    user: {
-      id: 'usr-analyst-04',
-      name: 'Alex Chen',
-      email: 'a.chen@iot-telemetry.io',
-      role: 'Supply Chain Analyst',
-      organization: 'PharmaTrack Predictive Telemetry Lab',
-      createdAt: '2026-04-12T14:20:00Z',
-      avatarUrl: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=120&h=120&fit=crop&crop=faces'
-    },
-    role: {
-      id: 'executive',
-      title: 'Senior IoT Telemetry Analyst',
-      department: 'Predictive Analytics & IoT',
-      name: 'Alex Chen'
-    },
-    passwordHint: 'IoTAnalytics2026!',
-    description: 'Microclimate thermal risk modeling, MKT degradation equations, and sensor calibration telemetry.',
-    badgeColor: 'bg-purple-500/20 text-purple-300 border-purple-500/40'
-  }
-];
 
 export const LoginPage: React.FC<LoginPageProps> = ({
   onLoginSuccess,
@@ -126,7 +36,6 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   const [password, setPassword] = useState<string>('');
   const [showPassword, setShowPassword] = useState<boolean>(false);
   const [fullName, setFullName] = useState<string>('');
-  const [selectedRole, setSelectedRole] = useState<SupabaseUser['role']>('Quality Lead');
   const [organization, setOrganization] = useState<string>('');
   const [rememberMe, setRememberMe] = useState<boolean>(true);
   const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -177,7 +86,6 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
       const result = await signUpWithEmail(email, password, {
         fullName,
-        role: selectedRole,
         organization: organization || 'Unassigned Organization',
       });
       setIsLoading(false);
@@ -215,16 +123,6 @@ export const LoginPage: React.FC<LoginPageProps> = ({
     setResetSent(true);
   };
 
-  // Quick 1-click login with demo persona
-  const handleQuickDemoLogin = (account: typeof DEMO_ACCOUNTS[0]) => {
-    setIsLoading(true);
-    setErrorMsg(null);
-    setTimeout(() => {
-      setIsLoading(false);
-      onLoginSuccess(account.user, account.role);
-    }, 400);
-  };
-
   const inputClass = `w-full ${t.cardBgSunken} border ${t.light ? 'border-slate-300' : 'border-slate-700'} rounded-lg px-3 py-2 text-xs ${t.textPrimary} ${t.light ? 'placeholder-slate-400' : 'placeholder-slate-500'} focus:outline-none focus:border-teal-500`;
   const authTabClass = (mode: typeof authMode) => `px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
     authMode === mode
@@ -236,7 +134,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
     <div className="min-h-[85vh] flex items-center justify-center py-6 px-4">
       <div className={`w-full max-w-4xl grid grid-cols-1 lg:grid-cols-12 gap-6 ${t.cardBg} border ${t.light ? 'border-slate-300' : 'border-slate-800'} rounded-2xl shadow-2xl overflow-hidden backdrop-blur-xl`}>
 
-        {/* Left Side: Brand & Quick Demo Persona Switcher */}
+        {/* Left Side: Brand & Why Sign In */}
         <div className={`lg:col-span-5 p-6 sm:p-8 flex flex-col justify-between border-b lg:border-b-0 lg:border-r ${t.border} ${
           t.light ? 'bg-gradient-to-br from-slate-50 via-white to-slate-50' : 'bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950'
         }`}>
@@ -255,44 +153,16 @@ export const LoginPage: React.FC<LoginPageProps> = ({
               </div>
             </div>
 
-            <div className={`mb-6 rounded-xl p-3.5 border ${t.cardBgSunken} ${t.border}`}>
+            <div className={`mb-4 rounded-xl p-3.5 border ${t.cardBgSunken} ${t.border}`}>
               <div className={`flex items-center gap-2 text-xs font-bold mb-1.5 ${t.light ? 'text-teal-600' : 'text-teal-400'}`}>
-                <Sparkles className="w-3.5 h-3.5" />
-                <span>Explore Without an Account</span>
+                <Users className="w-3.5 h-3.5" />
+                <span>What signing in unlocks</span>
               </div>
-              <p className={`text-[11px] mb-3 ${t.textMuted}`}>
-                These load a persona locally in your browser only — no Supabase account is created or signed into. For a real, verified sign-in use the form on the right.
+              <p className={`text-[11px] leading-relaxed ${t.textMuted}`}>
+                Advanced mode's full operational console — the lane management table, per-leg carrier assignment,
+                mid-transit disruption reporting, GDP compliance trends, and the immutable audit trail — all backed
+                by real Supabase data instead of the local demo dataset. Simple mode stays open without an account.
               </p>
-
-              <div className="space-y-2">
-                {DEMO_ACCOUNTS.map((acc) => (
-                  <button
-                    key={acc.user.id}
-                    onClick={() => handleQuickDemoLogin(acc)}
-                    disabled={isLoading}
-                    className={`w-full text-left p-2.5 rounded-lg border transition-all flex items-center justify-between group ${
-                      t.light ? 'bg-white hover:bg-slate-50 border-slate-200 hover:border-teal-400' : 'bg-slate-950/70 hover:bg-slate-800/80 border-slate-800 hover:border-teal-500/50'
-                    }`}
-                  >
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <img
-                        src={acc.user.avatarUrl}
-                        alt={acc.user.name}
-                        className={`w-8 h-8 rounded-full object-cover flex-shrink-0 border ${t.light ? 'border-slate-300' : 'border-slate-700'}`}
-                      />
-                      <div className="min-w-0">
-                        <div className={`text-xs font-bold truncate ${t.textSecondary} ${t.light ? 'group-hover:text-slate-950' : 'group-hover:text-white'}`}>
-                          {acc.user.name}
-                        </div>
-                        <div className={`text-[10px] truncate ${t.textMuted}`}>
-                          {acc.user.role} • {acc.user.organization.split(' ')[0]}
-                        </div>
-                      </div>
-                    </div>
-                    <ChevronRight className={`w-4 h-4 group-hover:translate-x-0.5 transition-all flex-shrink-0 ${t.textFaint} ${t.light ? 'group-hover:text-teal-600' : 'group-hover:text-teal-400'}`} />
-                  </button>
-                ))}
-              </div>
             </div>
 
             <div className={`p-3 rounded-lg border text-[11px] flex items-start gap-2 ${
@@ -437,23 +307,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                 </div>
 
                 {authMode === 'REGISTER' && (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <label className={`block text-xs font-semibold mb-1.5 ${t.textSecondary}`}>
-                        Assigned Role
-                      </label>
-                      <select
-                        value={selectedRole}
-                        onChange={(e) => setSelectedRole(e.target.value as SupabaseUser['role'])}
-                        className={inputClass}
-                      >
-                        <option value="Quality Lead">Quality Assurance Lead</option>
-                        <option value="Logistics Director">Logistics & Fleet Director</option>
-                        <option value="GDP Auditor">GDP Compliance Auditor</option>
-                        <option value="Supply Chain Analyst">Supply Chain Analyst</option>
-                      </select>
-                    </div>
-
+                  <div className="space-y-3">
                     <div>
                       <label className={`block text-xs font-semibold mb-1.5 ${t.textSecondary}`}>
                         Organization / Facility
@@ -469,6 +323,11 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                         />
                       </div>
                     </div>
+                    <p className={`text-[11px] leading-relaxed ${t.textFaint}`}>
+                      New accounts start as <strong className={t.textSecondary}>Supply Chain Analyst</strong> — the
+                      role with no CAPA/certification or critical-alert sign-off authority. An existing Quality Lead
+                      or GDP Auditor can grant a higher role afterward from Settings.
+                    </p>
                   </div>
                 )}
 

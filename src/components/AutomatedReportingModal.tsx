@@ -9,7 +9,7 @@ import {
   Mail,
   FileSpreadsheet
 } from 'lucide-react';
-import { TransportLane, AlertNotification, AuditLogEntry, UserRole } from '../types';
+import { TransportLane, AlertNotification, AuditLogEntry, SupabaseUser } from '../types';
 import { CapaRecord } from '../services/supabaseService';
 import { formatCurrency } from '../utils/formatters';
 import { useThemeTokens } from '../contexts/ViewModeContext';
@@ -19,7 +19,7 @@ interface AutomatedReportingModalProps {
   alerts: AlertNotification[];
   logs: AuditLogEntry[];
   capaRecords: CapaRecord[];
-  activeRole: UserRole;
+  currentUser: SupabaseUser;
   onClose: () => void;
 }
 
@@ -30,7 +30,7 @@ export const AutomatedReportingModal: React.FC<AutomatedReportingModalProps> = (
   alerts,
   logs,
   capaRecords,
-  activeRole,
+  currentUser,
   onClose,
 }) => {
   const t = useThemeTokens();
@@ -389,8 +389,8 @@ export const AutomatedReportingModal: React.FC<AutomatedReportingModalProps> = (
               <div className={`pt-4 border-t grid grid-cols-2 gap-4 text-[10px] ${t.border} ${t.textMuted}`}>
                 <div>
                   <div className={`font-semibold ${t.textSecondary}`}>Generated & Approved By:</div>
-                  <div className={`font-bold ${t.textPrimary}`}>{activeRole.name}</div>
-                  <div>{activeRole.title} • {activeRole.department}</div>
+                  <div className={`font-bold ${t.textPrimary}`}>{currentUser.name}</div>
+                  <div>{currentUser.role} • {currentUser.organization}</div>
                 </div>
                 <div className="text-right">
                   <div className={`font-semibold ${t.textSecondary}`}>Regulatory Cryptographic Seal:</div>

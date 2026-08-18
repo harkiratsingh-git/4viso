@@ -1,7 +1,8 @@
 import React from 'react';
 import { AlertTriangle, ArrowRight, CheckCircle2, PackageSearch, Thermometer } from 'lucide-react';
-import { TransportLane } from '../types';
+import { Carrier, CarrierPerformanceSummary, TransportLane } from '../types';
 import { isLaneHighRisk, isLaneExcursing } from '../utils/laneRisk';
+import { getQuickRecommendation } from '../utils/quickRecommendation';
 import { useViewMode } from '../contexts/ViewModeContext';
 import { WorldRouteMap } from './WorldRouteMap';
 
@@ -10,6 +11,8 @@ interface SimpleDashboardProps {
   selectedLaneId: string | null;
   onSelectLane: (lane: TransportLane) => void;
   onGoAdvanced: () => void;
+  carriers: Carrier[];
+  carrierPerformanceById: Map<string, CarrierPerformanceSummary>;
 }
 
 function attentionReason(lane: TransportLane): string {
@@ -28,7 +31,7 @@ function attentionReason(lane: TransportLane): string {
  * reserved for the one number that actually needs it (Needs Attention), not repeated on every
  * panel, or a first-time viewer reads the whole page as an alarm regardless of color choice.
  */
-export const SimpleDashboard: React.FC<SimpleDashboardProps> = ({ lanes, selectedLaneId, onSelectLane, onGoAdvanced }) => {
+export const SimpleDashboard: React.FC<SimpleDashboardProps> = ({ lanes, selectedLaneId, onSelectLane, onGoAdvanced, carriers, carrierPerformanceById }) => {
   const { theme } = useViewMode();
   const light = theme === 'light';
 
@@ -103,7 +106,9 @@ export const SimpleDashboard: React.FC<SimpleDashboardProps> = ({ lanes, selecte
           </div>
         ) : (
           <ul className="space-y-2">
-            {decisionList.map((lane) => (
+            {decisionList.map((lane) => {
+              const recommendation = getQuickRecommendation(lane, carriers, carrierPerformanceById);
+              return (
               <li key={lane.id}>
                 <button
                   onClick={() => onSelectLane(lane)}
@@ -122,12 +127,18 @@ export const SimpleDashboard: React.FC<SimpleDashboardProps> = ({ lanes, selecte
                       <div className={`text-xs truncate ${mutedText}`}>
                         {lane.originCity} → {lane.destinationCity} · {attentionReason(lane)}
                       </div>
+                      {recommendation && (
+                        <div className={`text-xs mt-0.5 truncate font-medium ${light ? 'text-teal-700' : 'text-teal-300'}`}>
+                          Recommended: {recommendation.headline}
+                        </div>
+                      )}
                     </div>
                   </div>
                   <ArrowRight className={`w-4 h-4 flex-shrink-0 ${mutedText}`} />
                 </button>
               </li>
-            ))}
+              );
+            })}
             {needsAttention.length > decisionList.length && (
               <li className={`text-xs ${mutedText} px-3`}>
                 +{needsAttention.length - decisionList.length} more — switch to Advanced for the full list.

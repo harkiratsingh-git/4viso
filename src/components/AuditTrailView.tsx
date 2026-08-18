@@ -118,6 +118,7 @@ export const AuditTrailView: React.FC<AuditTrailViewProps> = ({ logs }) => {
           <option value="GDP_AUDIT">GDP Certifications & Audits</option>
           <option value="ALERT_ACKNOWLEDGED">Alert Acknowledgments</option>
           <option value="CAPA_LOGGED">CAPA Investigations</option>
+          <option value="MITIGATION_EXECUTED">Mitigations Executed</option>
         </select>
       </div>
 

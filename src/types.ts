@@ -175,6 +175,10 @@ export interface RiskFactor {
   impact: 'Minor' | 'Moderate' | 'Major' | 'Severe';
   mitigationStrategy: string;
   recommendedAction: string;
+  /** Absent/undefined means 'Open' — risk factors are never persisted server-side (see
+   *  generateDefaultRiskFactors), so this is purely client-session state tracking whether
+   *  "Execute Mitigation" has been clicked for this item. */
+  status?: 'Open' | 'Mitigation Actioned';
 }
 
 export interface TemperatureReading {
@@ -276,7 +280,7 @@ export interface AuditLogEntry {
   role: string;
   laneCode: string;
   action: string;
-  category: 'TEMPERATURE_MONITORING' | 'LANE_CONFIGURATION' | 'RISK_OVERRIDE' | 'GDP_AUDIT' | 'ALERT_ACKNOWLEDGED' | 'CAPA_LOGGED' | 'SECURITY';
+  category: 'TEMPERATURE_MONITORING' | 'LANE_CONFIGURATION' | 'RISK_OVERRIDE' | 'GDP_AUDIT' | 'ALERT_ACKNOWLEDGED' | 'CAPA_LOGGED' | 'SECURITY' | 'MITIGATION_EXECUTED';
   details: string;
   hash: string;
   status: 'VERIFIED' | 'FLAGGED';

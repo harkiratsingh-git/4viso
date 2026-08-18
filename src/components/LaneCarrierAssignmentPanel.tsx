@@ -15,6 +15,7 @@ import { useThemeTokens } from '../contexts/ViewModeContext';
 
 interface LaneCarrierAssignmentPanelProps {
   lane: TransportLane;
+  dataSource: 'loading' | 'cloud' | 'local';
 }
 
 /**
@@ -22,8 +23,15 @@ interface LaneCarrierAssignmentPanelProps {
  * lane's real lane_legs rows, shows the same collapse-to-one-badge-or-per-leg-breakdown UI,
  * and lets a Quality Lead/Logistics Director correct an assignment after the fact — always
  * editable, per the spec, not just at creation time.
+ *
+ * A demo lane's id (e.g. "lane-3") is never a real transport_lanes row, so fetchLaneLegs/
+ * replaceLaneLegs must never be attempted for one — lane_legs.lane_id is a real foreign key,
+ * and a replaceLaneLegs INSERT against a nonexistent lane would fail outright. In local mode
+ * this panel still computes and shows live recommendations (same engine, same UI), it just
+ * can't seed from or persist to a lane_legs row that doesn't exist — "Save" confirms the
+ * selection for the current session instead.
  */
-export const LaneCarrierAssignmentPanel: React.FC<LaneCarrierAssignmentPanelProps> = ({ lane }) => {
+export const LaneCarrierAssignmentPanel: React.FC<LaneCarrierAssignmentPanelProps> = ({ lane, dataSource }) => {
   const t = useThemeTokens();
   const [carriers, setCarriers] = useState<Carrier[]>([]);
   const [performanceByCarrierId, setPerformanceByCarrierId] = useState<Map<string, CarrierPerformanceSummary>>(new Map());
@@ -39,7 +47,12 @@ export const LaneCarrierAssignmentPanel: React.FC<LaneCarrierAssignmentPanelProp
   useEffect(() => {
     let cancelled = false;
 
-    Promise.all([fetchCarriers(), fetchCarrierPerformanceSummary(), fetchCarrierCertificationStatuses(), fetchLaneLegs(lane.id)]).then(
+    Promise.all([
+      fetchCarriers(),
+      fetchCarrierPerformanceSummary(),
+      fetchCarrierCertificationStatuses(),
+      dataSource === 'cloud' ? fetchLaneLegs(lane.id) : Promise.resolve(null),
+    ]).then(
       async ([carrierRows, perfRows, certRows, legRows]) => {
         if (cancelled) return;
         const carrierList = carrierRows ?? [];
@@ -73,12 +86,23 @@ export const LaneCarrierAssignmentPanel: React.FC<LaneCarrierAssignmentPanelProp
     return () => {
       cancelled = true;
     };
-  }, [lane.id, lane.originIata, lane.destinationIata, lane.mode, lane.tempRangeType]);
+  }, [lane.id, lane.originIata, lane.destinationIata, lane.mode, lane.tempRangeType, dataSource]);
 
   const handleSave = async () => {
     if (!legs) return;
     setSaving(true);
     setSaveMessage(null);
+
+    if (dataSource !== 'cloud') {
+      // No real lane_legs row exists to persist to for a demo lane — the selection is already
+      // reflected live in the dropdowns above, so this just confirms it for the session.
+      setTimeout(() => {
+        setSaving(false);
+        setSaveMessage('Carrier assignment updated for this session (Local Simulation — not saved to a database).');
+      }, 300);
+      return;
+    }
+
     const rows = legs.map((l) => ({
       legSequence: l.legSequence,
       originPortCode: l.origin.iata,
