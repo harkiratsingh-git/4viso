@@ -13,6 +13,10 @@ interface TopBarProps {
   onOpenAlerts: () => void;
   realtimeStatus: 'disabled' | 'connecting' | 'live' | 'reconnecting';
   onOpenMobileNav?: () => void;
+  /** Light theme is only actually built out for the Simple Dashboard — everywhere else stays
+   *  dark regardless of the theme preference, so the combination is never a light shell around
+   *  still-dark content. This is true exactly when App.tsx's own `lightShell` is true. */
+  lightModeAvailable: boolean;
 }
 
 /**
@@ -29,9 +33,10 @@ export const TopBar: React.FC<TopBarProps> = ({
   onOpenAlerts,
   realtimeStatus,
   onOpenMobileNav,
+  lightModeAvailable,
 }) => {
   const { mode, setMode, theme, setTheme } = useViewMode();
-  const light = theme === 'light';
+  const light = theme === 'light' && lightModeAvailable;
 
   return (
     <header className={`backdrop-blur-md border-b sticky top-0 z-40 px-4 sm:px-6 py-3 ${light ? 'bg-white/90 border-slate-200' : 'bg-slate-900/90 border-slate-800'}`}>
@@ -80,13 +85,26 @@ export const TopBar: React.FC<TopBarProps> = ({
           </div>
 
           <button
-            onClick={() => setTheme(light ? 'dark' : 'light')}
-            title={light ? 'Switch to dark theme' : 'Switch to light theme'}
-            className={`min-w-[36px] min-h-[36px] flex items-center justify-center rounded-lg border transition-colors ${
-              light ? 'bg-slate-100 border-slate-200 text-slate-600 hover:text-slate-900' : 'bg-slate-800 border-slate-700 text-slate-300 hover:text-white'
+            onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}
+            title={
+              lightModeAvailable
+                ? light
+                  ? 'Switch to dark theme'
+                  : 'Switch to light theme'
+                : 'Light theme is available on the Simple Dashboard — the rest of the app uses a fixed dark theme'
+            }
+            className={`relative min-w-[36px] min-h-[36px] flex items-center justify-center rounded-lg border transition-colors ${
+              light
+                ? 'bg-slate-100 border-slate-200 text-slate-600 hover:text-slate-900'
+                : lightModeAvailable
+                ? 'bg-slate-800 border-slate-700 text-slate-300 hover:text-white'
+                : 'bg-slate-800/60 border-slate-700/60 text-slate-500 hover:text-slate-300'
             }`}
           >
-            {light ? <Moon className="w-4 h-4" /> : <Sun className="w-4 h-4" />}
+            {theme === 'light' ? <Moon className="w-4 h-4" /> : <Sun className="w-4 h-4" />}
+            {!lightModeAvailable && theme === 'light' && (
+              <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-amber-400" title="Light theme preference saved, but not active here" />
+            )}
           </button>
 
           <div className="relative hidden sm:block w-52 lg:w-72">

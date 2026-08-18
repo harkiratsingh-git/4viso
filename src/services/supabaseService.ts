@@ -600,6 +600,26 @@ export async function syncDataToSupabase(
 
 export const syncAllToSupabase = syncDataToSupabase;
 
+/**
+ * Inserts a single newly-created lane into transport_lanes. This was missing entirely from the
+ * Add Lane wizard's save path — handleFinish() only ever updated local React state, so a
+ * cloud-connected session's new lane existed solely in that browser tab's memory (gone on
+ * reload) and the lane_legs/lane_route_options writes for it were silently failing server-side
+ * on the foreign key, since the lane row they reference never actually existed. Returns false
+ * (not an error) when offline/local — callers should treat that as "nothing more to persist
+ * server-side," not a failure.
+ */
+export async function insertLaneToSupabase(lane: TransportLane): Promise<boolean> {
+  const client = getSupabaseClient();
+  if (!client) return false;
+  const { error } = await client.from('transport_lanes').insert(mapLaneToRow(lane, new Date().toISOString()));
+  if (error) {
+    console.warn('transport_lanes insert notice:', error.message);
+    return false;
+  }
+  return true;
+}
+
 // Read lanes, alerts, audit trail, and recent telemetry back from Supabase. Returns null
 // (rather than throwing) when there's no client configured or the core lanes table can't be
 // read, so callers can cleanly fall back to local demo data.

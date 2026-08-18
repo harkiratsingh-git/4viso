@@ -666,7 +666,13 @@ export default function App() {
   const criticalCount = unreadAlerts.filter(a => a.severity === 'Critical').length;
 
   const { mode: viewMode, setMode: setViewMode, theme } = useViewMode();
-  const lightShell = theme === 'light';
+  // Light theme is only actually built out for the Simple Dashboard — everywhere else (Advanced
+  // mode, every other tab, the wizard) is ~30 components that were never made theme-aware.
+  // Rather than a light shell wrapping still-dark content (jarring, looked broken), lock the
+  // whole app to dark the moment you're not looking at Simple Dashboard, so the combination is
+  // always consistent: light only there, dark everywhere else, never a random per-component mix.
+  const lightModeAvailable = viewMode === 'simple' && activeTab === 'DASHBOARD';
+  const lightShell = theme === 'light' && lightModeAvailable;
 
   return (
     <div className={`min-h-screen font-sans selection:bg-teal-500 selection:text-white flex ${lightShell ? 'bg-slate-50 text-slate-900' : 'bg-[#070d14] text-slate-100'}`}>
@@ -731,6 +737,7 @@ export default function App() {
           onOpenAlerts={() => setIsAlertsCenterOpen(true)}
           realtimeStatus={realtimeStatus}
           onOpenMobileNav={() => setIsMobileNavOpen(true)}
+          lightModeAvailable={lightModeAvailable}
         />
 
         {/* Main Container */}

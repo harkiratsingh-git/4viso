@@ -26,6 +26,7 @@ import {
   fetchCorridorAdvisories,
   fetchCarrierPerformanceSummary,
   fetchCarrierCertificationStatuses,
+  insertLaneToSupabase,
   replaceLaneLegs,
   insertLaneRouteOption,
   getActiveUser,
@@ -441,31 +442,39 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
 
     // Fire-and-forget persistence, matching the pattern used elsewhere in this wizard (e.g.
     // insertAuditLogEntry) — these writes shouldn't block the confirmation screen from showing.
-    replaceLaneLegs(newLane.id, resolvedLegs);
-    if (computedRouteOptions) {
-      for (const opt of computedRouteOptions) {
-        insertLaneRouteOption(
-          {
-            optionType: opt.type,
-            legsSnapshot: opt.legs.map((l) => ({
-              legSequence: l.legSequence,
-              origin: l.origin.iata,
-              destination: l.destination.iata,
-              mode: l.mode,
-              carrierId: l.topCarrierPick?.carrier.id ?? null,
-              riskScore: l.riskScore,
-            })),
-            totalDistanceKm: opt.totalDistanceKm,
-            totalTransitHours: null,
-            totalCustomsDelayHours: null,
-            totalRiskScore: opt.totalRiskScore,
-            wasChosen: opt.type === selectedRouteOption,
-          },
-          newLane.id,
-          currentUser.id
-        );
+    // The lane itself must be inserted into transport_lanes first (a no-op returning false when
+    // offline/local) before the legs/route-options, since both of those carry a foreign key to
+    // it — firing them in parallel with the lane insert (or not inserting the lane at all, which
+    // is what this wizard used to do) means they'd fail against a lane row that doesn't exist
+    // yet, or ever, server-side.
+    insertLaneToSupabase(newLane).then((created) => {
+      if (!created) return;
+      replaceLaneLegs(newLane.id, resolvedLegs);
+      if (computedRouteOptions) {
+        for (const opt of computedRouteOptions) {
+          insertLaneRouteOption(
+            {
+              optionType: opt.type,
+              legsSnapshot: opt.legs.map((l) => ({
+                legSequence: l.legSequence,
+                origin: l.origin.iata,
+                destination: l.destination.iata,
+                mode: l.mode,
+                carrierId: l.topCarrierPick?.carrier.id ?? null,
+                riskScore: l.riskScore,
+              })),
+              totalDistanceKm: opt.totalDistanceKm,
+              totalTransitHours: null,
+              totalCustomsDelayHours: null,
+              totalRiskScore: opt.totalRiskScore,
+              wasChosen: opt.type === selectedRouteOption,
+            },
+            newLane.id,
+            currentUser.id
+          );
+        }
       }
-    }
+    });
   };
 
   const stepLabels = ['1. Route & Cargo', '2. Mode', '3. Risk Check', '4. Alert Rules'];
