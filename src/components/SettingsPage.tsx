@@ -52,6 +52,15 @@ import {
   updateUserRole,
   UserProfileSummary,
 } from '../services/supabaseService';
+import {
+  listConnectedApiKeys,
+  fetchActiveAiProvider,
+  setActiveAiProvider,
+  saveApiKey,
+  SUPPORTED_AI_PROVIDERS,
+  ConnectedApiKey,
+  AiProvider,
+} from '../services/apiKeysService';
 import { useThemeTokens } from '../contexts/ViewModeContext';
 import { Avatar } from './Avatar';
 
@@ -70,12 +79,16 @@ interface SettingsPageProps {
   onTriggerSimulatedExcursion: () => void;
   isAuthenticated: boolean;
   dataSource: 'loading' | 'cloud' | 'local';
+  /** A fresh object (new reference each time) jumps to that tab — e.g. when the chat panel
+   *  sends the user here to connect an AI provider key. Normal Settings navigation never sets
+   *  this, so it doesn't override the user's own tab clicks. */
+  focusTab?: { tab: SettingsTab } | null;
 }
 
 const ADMIN_ROLES: SupabaseUser['role'][] = ['Quality Lead', 'GDP Auditor'];
 const ALL_ROLES: SupabaseUser['role'][] = ['Quality Lead', 'Logistics Director', 'GDP Auditor', 'Supply Chain Analyst'];
 
-type SettingsTab = 'GENERAL' | 'SUPABASE' | 'GITHUB' | 'COMPLIANCE' | 'NOTIFICATIONS' | 'BACKUP';
+export type SettingsTab = 'GENERAL' | 'SUPABASE' | 'GITHUB' | 'COMPLIANCE' | 'NOTIFICATIONS' | 'BACKUP';
 
 const TAB_ACCENT: Record<SettingsTab, { light: string; dark: string; icon: string }> = {
   GENERAL: { light: 'bg-teal-100 text-teal-700 border-teal-300', dark: 'bg-teal-500/20 text-teal-300 border-teal-500/30', icon: 'text-teal-400' },
@@ -101,9 +114,14 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   onTriggerSimulatedExcursion,
   isAuthenticated,
   dataSource,
+  focusTab,
 }) => {
   const t = useThemeTokens();
   const [activeTab, setActiveTab] = useState<SettingsTab>('GENERAL');
+  useEffect(() => {
+    if (focusTab) setActiveTab(focusTab.tab);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusTab]);
   const isAdmin = ADMIN_ROLES.includes(currentUser.role);
 
   // Local editable settings state
@@ -148,6 +166,44 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     setSavingRoleFor(null);
     setRoleSaveMessage(result.message);
     if (result.success) loadUserDirectory();
+  };
+
+  // AI Provider — connect-your-own-key for the Advanced assistant
+  const [connectedKeys, setConnectedKeys] = useState<ConnectedApiKey[] | null>(null);
+  const [activeProvider, setActiveProviderState] = useState<AiProvider | null>(null);
+  const [keyFormProvider, setKeyFormProvider] = useState<AiProvider>('Anthropic');
+  const [keyFormSecret, setKeyFormSecret] = useState('');
+  const [keyFormLabel, setKeyFormLabel] = useState('');
+  const [isSavingKey, setIsSavingKey] = useState(false);
+  const [saveKeyMessage, setSaveKeyMessage] = useState<{ success: boolean; text: string } | null>(null);
+  const [switchingProvider, setSwitchingProvider] = useState<AiProvider | null>(null);
+  const loadApiKeys = () => {
+    listConnectedApiKeys().then(setConnectedKeys);
+    fetchActiveAiProvider(currentUser.id).then(setActiveProviderState);
+  };
+  useEffect(() => {
+    if (isAuthenticated && dataSource === 'cloud' && activeTab === 'COMPLIANCE') loadApiKeys();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated, dataSource, activeTab]);
+  const handleSaveApiKey = async () => {
+    setIsSavingKey(true);
+    setSaveKeyMessage(null);
+    const result = await saveApiKey(keyFormProvider, keyFormSecret, keyFormLabel);
+    setIsSavingKey(false);
+    if (result.success) {
+      setSaveKeyMessage({ success: true, text: `${keyFormProvider} key connected.` });
+      setKeyFormSecret('');
+      setKeyFormLabel('');
+      loadApiKeys();
+    } else {
+      setSaveKeyMessage({ success: false, text: result.message || 'Failed to save that key.' });
+    }
+  };
+  const handleSetActiveProvider = async (provider: AiProvider) => {
+    setSwitchingProvider(provider);
+    const result = await setActiveAiProvider(currentUser.id, provider);
+    setSwitchingProvider(null);
+    if (result.success) setActiveProviderState(provider);
   };
 
   // Feedback states
@@ -873,6 +929,130 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
               </div>
             </div>
           </div>
+
+          {/* AI Provider — connect your own key for the Advanced assistant. A fixed provider
+              list (never a free-text URL/endpoint field) — deliberately, to avoid an SSRF
+              surface where a user-supplied URL could be used to make the server-side assistant
+              function reach an internal or arbitrary address. */}
+          {isAuthenticated && dataSource === 'cloud' && (
+            <div className={cardClass}>
+              <div className="mb-4">
+                <h3 className={`text-xs font-bold flex items-center gap-1.5 ${t.textPrimary}`}>
+                  <Key className={`w-4 h-4 ${t.light ? 'text-teal-600' : 'text-teal-400'}`} />
+                  AI Provider — Advanced Assistant
+                </h3>
+                <p className={`text-[11px] ${t.textMuted}`}>
+                  Connect your own Anthropic, OpenAI, or Google Gemini key and the Advanced assistant uses it for your
+                  requests instead of a shared app key. Your key is stored in Supabase Vault — it's never shown again
+                  after you save it, not even to you; re-enter it fresh to replace it.
+                </p>
+              </div>
+
+              {connectedKeys === null ? (
+                <div className={`flex items-center gap-2 text-xs py-3 ${t.textMuted}`}>
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Loading connected providers…
+                </div>
+              ) : (
+                <>
+                  {connectedKeys.length === 0 && (
+                    <div className={`mb-4 p-3 rounded-lg text-[11px] flex items-start gap-2 border ${
+                      t.light ? 'bg-amber-50 border-amber-300 text-amber-800' : 'bg-amber-950/30 border-amber-800/50 text-amber-200'
+                    }`}>
+                      <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+                      <span>No provider connected yet — the Advanced assistant won't work until you connect one below.</span>
+                    </div>
+                  )}
+
+                  {connectedKeys.length > 0 && (
+                    <div className="space-y-2 mb-4">
+                      {connectedKeys.map((k) => {
+                        const isCurrent = activeProvider === k.provider;
+                        return (
+                          <div key={k.provider} className={`flex flex-col sm:flex-row sm:items-center gap-2 p-2.5 rounded-lg border ${t.cardBgSunken} ${t.border}`}>
+                            <div className="flex-1 min-w-0">
+                              <div className={`text-xs font-semibold flex items-center gap-2 ${t.textPrimary}`}>
+                                {k.provider}
+                                {isCurrent && (
+                                  <span className={`text-[10px] px-1.5 py-0.5 rounded-full border ${t.light ? 'bg-emerald-100 text-emerald-700 border-emerald-300' : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'}`}>
+                                    In use
+                                  </span>
+                                )}
+                              </div>
+                              <div className={`text-[10px] ${t.textFaint}`}>
+                                {k.label ? `${k.label} · ` : ''}•••• {k.lastFourChars} · connected {new Date(k.createdAt).toLocaleDateString()}
+                              </div>
+                            </div>
+                            {connectedKeys.length > 1 && !isCurrent && (
+                              <button
+                                type="button"
+                                onClick={() => handleSetActiveProvider(k.provider)}
+                                disabled={switchingProvider === k.provider}
+                                className={`px-2.5 py-1 rounded-lg border text-[11px] font-semibold transition-all disabled:opacity-40 flex-shrink-0 ${
+                                  t.light ? 'bg-teal-100 hover:bg-teal-200 text-teal-700 border-teal-300' : 'bg-teal-500/15 hover:bg-teal-500/25 text-teal-300 border-teal-500/30'
+                                }`}
+                              >
+                                {switchingProvider === k.provider ? 'Switching…' : 'Use this one'}
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  <div className={`pt-3 border-t ${t.border}`}>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
+                      <div>
+                        <label className={labelClass}>Provider</label>
+                        <select value={keyFormProvider} onChange={(e) => setKeyFormProvider(e.target.value as AiProvider)} className={inputClass}>
+                          {SUPPORTED_AI_PROVIDERS.map((p) => (
+                            <option key={p} value={p}>{p}{connectedKeys.some((k) => k.provider === p) ? ' (connected — re-enter to replace)' : ''}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className={labelClass}>API Key</label>
+                        <input
+                          type="password"
+                          value={keyFormSecret}
+                          onChange={(e) => setKeyFormSecret(e.target.value)}
+                          placeholder="Paste your key…"
+                          autoComplete="off"
+                          className={`${inputClass} font-mono`}
+                        />
+                      </div>
+                      <div>
+                        <label className={labelClass}>Label (optional)</label>
+                        <input
+                          type="text"
+                          value={keyFormLabel}
+                          onChange={(e) => setKeyFormLabel(e.target.value)}
+                          placeholder="e.g. Personal key"
+                          className={inputClass}
+                        />
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleSaveApiKey}
+                      disabled={isSavingKey || keyFormSecret.trim().length < 8}
+                      className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg border text-xs font-bold transition-all disabled:opacity-50 ${
+                        t.light ? 'bg-teal-100 text-teal-700 border-teal-300 hover:bg-teal-200' : 'bg-teal-500/20 text-teal-300 border-teal-500/30 hover:bg-teal-500/30'
+                      }`}
+                    >
+                      {isSavingKey ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Key className="w-3.5 h-3.5" />}
+                      <span>{isSavingKey ? 'Saving…' : 'Connect Key'}</span>
+                    </button>
+                    {saveKeyMessage && (
+                      <p className={`text-[11px] mt-2 ${saveKeyMessage.success ? (t.light ? 'text-emerald-700' : 'text-emerald-300') : (t.light ? 'text-rose-700' : 'text-rose-300')}`}>
+                        {saveKeyMessage.text}
+                      </p>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
 
           {/* Manage User Roles — admin-only, real (RLS-enforced) elevation, not a client-side
               toggle. New accounts always start as Supply Chain Analyst; this is the only path

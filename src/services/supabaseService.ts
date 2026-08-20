@@ -1,5 +1,5 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { TransportLane, AlertNotification, AuditLogEntry, SupabaseSettings, SupabaseUser, CloudSyncState, RiskLevel, CorridorAdvisory, Carrier, CarrierPerformanceSummary, LaneLeg, LaneCarrierSummary, LaneRouteOption, CarrierCertificationStatus, CarrierCertification, LaneDisruption, TransferDocument } from '../types';
+import { TransportLane, AlertNotification, AuditLogEntry, SupabaseSettings, SupabaseUser, CloudSyncState, RiskLevel, GdpStatus, CorridorAdvisory, Carrier, CarrierPerformanceSummary, LaneLeg, LaneCarrierSummary, LaneRouteOption, CarrierCertificationStatus, CarrierCertification, LaneDisruption, TransferDocument } from '../types';
 import {
   mapRowToLane,
   mapLaneToRow,
@@ -1741,10 +1741,12 @@ supabase functions deploy assistant
  * the Lane table, the dashboard view, a future report — agrees by construction. Fire-and-forget:
  * this must never block the UI it's correcting.
  */
-export async function syncLaneRiskToSupabase(laneId: string, riskScore: number, riskLevel: RiskLevel): Promise<boolean> {
+export async function syncLaneRiskToSupabase(laneId: string, riskScore: number, riskLevel: RiskLevel, gdpStatus?: GdpStatus): Promise<boolean> {
   const client = getSupabaseClient();
   if (!client) return false;
-  const { error } = await client.from('transport_lanes').update({ risk_score: riskScore, risk_level: riskLevel }).eq('id', laneId);
+  const updates: Record<string, unknown> = { risk_score: riskScore, risk_level: riskLevel };
+  if (gdpStatus) updates.gdp_status = gdpStatus;
+  const { error } = await client.from('transport_lanes').update(updates).eq('id', laneId);
   if (error) {
     console.warn('transport_lanes risk sync notice:', error.message);
     return false;

@@ -1,4 +1,4 @@
-import { TransportLane, RiskLevel } from '../types';
+import { TransportLane, RiskLevel, GdpStatus } from '../types';
 
 // Single source of truth for "is this lane currently in trouble" — several places in the
 // app used to read lane.riskScore/riskLevel directly, which are only updated by a handful
@@ -28,4 +28,22 @@ export function getEffectiveRiskScore(lane: TransportLane): number {
 export function isLaneHighRisk(lane: TransportLane): boolean {
   const level = getEffectiveRiskLevel(lane);
   return getEffectiveRiskScore(lane) >= 40 || level === 'High' || level === 'Critical';
+}
+
+export function isHighOrCritical(level: RiskLevel): boolean {
+  return level === 'High' || level === 'Critical';
+}
+
+/** Same thresholds `assessRoute` uses for its overall route score — the one place a 0-100 risk
+ *  score is turned into a level, so every recompute path (Edit Lane, per-leg reassignment,
+ *  disruption resolution) agrees with the wizard's own scoring on what counts as High/Critical. */
+export function deriveRiskLevelFromScore(score: number): RiskLevel {
+  return score >= 55 ? 'Critical' : score >= 35 ? 'High' : score >= 18 ? 'Medium' : 'Low';
+}
+
+/** A lane's GDP status follows directly from its risk level post-recompute — Non-Compliant at
+ *  Critical (an active excursion-grade risk is itself a compliance failure), Warning at High,
+ *  Compliant otherwise. */
+export function gdpStatusForRiskLevel(level: RiskLevel): GdpStatus {
+  return level === 'Critical' ? 'Non-Compliant' : level === 'High' ? 'Warning' : 'Compliant';
 }

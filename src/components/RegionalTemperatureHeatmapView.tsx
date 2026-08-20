@@ -28,6 +28,15 @@ import { isLaneExcursing } from '../utils/laneRisk';
 import { haversineKm } from '../utils/geoMath';
 import { HOTSPOT_INFLUENCE_RADIUS_KM } from '../utils/riskAssessment';
 import { useThemeTokens } from '../contexts/ViewModeContext';
+import { usePorts } from '../contexts/PortsContext';
+import { fetchLatestPortWeather, isWeatherStale, PortWeather } from '../services/weatherService';
+import { formatRelative } from '../utils/dateFormat';
+
+/** A hotspot's coords are deliberately seeded at a real hub's location (e.g. hotspot-dxb sits
+ * exactly on DXB), so the nearest real port within this radius is genuinely "this place" rather
+ * than a coincidental neighbor — wide enough to tolerate minor coordinate rounding, tight enough
+ * to correctly return nothing for open-ocean hotspots like the Red Sea corridor. */
+const HOTSPOT_TO_PORT_MATCH_RADIUS_KM = 50;
 
 const geoUrl = 'https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json';
 
@@ -54,6 +63,8 @@ export const RegionalTemperatureHeatmapView: React.FC<RegionalTemperatureHeatmap
   const [showLaneCorridors, setShowLaneCorridors] = useState<boolean>(true);
   const [showFilterPopover, setShowFilterPopover] = useState<boolean>(false);
   const popoverRef = useRef<HTMLDivElement>(null);
+  const [portWeather, setPortWeather] = useState<Map<string, PortWeather>>(new Map());
+  const { ports } = usePorts();
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -64,6 +75,31 @@ export const RegionalTemperatureHeatmapView: React.FC<RegionalTemperatureHeatmap
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = () => fetchLatestPortWeather().then((map) => { if (!cancelled) setPortWeather(map); });
+    load();
+    const interval = setInterval(load, 5 * 60 * 1000); // weather-sync only runs hourly; this just picks up whatever's freshest
+    return () => { cancelled = true; clearInterval(interval); };
+  }, []);
+
+  // Each hotspot is seeded at a real hub's coordinates, so resolve it to that hub's actual port
+  // code once per ports-directory load rather than re-searching on every render.
+  const hotspotPortCodes = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const hotspot of REGIONAL_THERMAL_HOTSPOTS) {
+      let nearest: { code: string; distanceKm: number } | null = null;
+      for (const port of ports) {
+        const distanceKm = haversineKm(hotspot.coords, port.coords);
+        if (distanceKm <= HOTSPOT_TO_PORT_MATCH_RADIUS_KM && (!nearest || distanceKm < nearest.distanceKm)) {
+          nearest = { code: port.code, distanceKm };
+        }
+      }
+      if (nearest) map.set(hotspot.id, nearest.code);
+    }
+    return map;
+  }, [ports]);
 
   const excursionCount = lanes.filter(isLaneExcursing).length;
 
@@ -413,24 +449,45 @@ export const RegionalTemperatureHeatmapView: React.FC<RegionalTemperatureHeatmap
             </div>
 
             {/* Quick Metrics */}
-            <div className={`flex items-center gap-2 p-1.5 rounded-lg border text-xs ${t.cardBgSunken} ${t.border}`}>
-              <div className={`px-2.5 py-1 text-center border-r ${t.border}`}>
-                <div className={`text-[10px] ${t.textMuted}`}>Ambient Temp</div>
-                <div className={`font-mono font-bold ${t.textPrimary}`}>{selectedHotspot.ambientTempC}°C</div>
-              </div>
-              <div className={`px-2.5 py-1 text-center border-r ${t.border}`}>
-                <div className={`text-[10px] ${t.textMuted}`}>Ramp Surface</div>
-                <div className={`font-mono font-bold ${t.light ? 'text-rose-600' : 'text-rose-400'}`}>{selectedHotspot.rampSurfaceTempC}°C</div>
-              </div>
-              <div className={`px-2.5 py-1 text-center border-r ${t.border}`}>
-                <div className={`text-[10px] ${t.textMuted}`}>Humidity</div>
-                <div className={`font-mono font-bold ${t.light ? 'text-sky-600' : 'text-sky-400'}`}>{selectedHotspot.humidityPercent}%</div>
-              </div>
-              <div className="px-2.5 py-1 text-center">
-                <div className={`text-[10px] ${t.textMuted}`}>Max Exposure</div>
-                <div className={`font-mono font-bold ${t.light ? 'text-amber-600' : 'text-amber-400'}`}>{selectedHotspot.tarmacExposureRiskMins}m</div>
-              </div>
-            </div>
+            {(() => {
+              const livePortCode = hotspotPortCodes.get(selectedHotspot.id);
+              const live = livePortCode ? portWeather.get(livePortCode) : undefined;
+              const hasLiveReading = !!live && !isWeatherStale(live.fetchedAt);
+              return (
+                <div className={`flex items-center gap-2 p-1.5 rounded-lg border text-xs ${t.cardBgSunken} ${t.border}`}>
+                  <div className={`px-2.5 py-1 text-center border-r ${t.border} min-w-[92px]`}>
+                    <div className={`text-[10px] ${t.textMuted} flex items-center justify-center gap-1`}>
+                      Ambient Temp
+                      {hasLiveReading && <span className={`w-1.5 h-1.5 rounded-full ${t.light ? 'bg-emerald-500' : 'bg-emerald-400'}`} title="Live OpenWeatherMap reading" />}
+                    </div>
+                    {hasLiveReading ? (
+                      <>
+                        <div className={`font-mono font-bold ${t.textPrimary}`}>{live!.tempC.toFixed(1)}°C</div>
+                        <div className={`text-[9px] ${t.textMuted}`}>{formatRelative(live!.fetchedAt)}</div>
+                      </>
+                    ) : (
+                      <div className={`text-[10px] italic ${t.textMuted}`}>No recent weather data</div>
+                    )}
+                  </div>
+                  <div className={`px-2.5 py-1 text-center border-r ${t.border}`}>
+                    <div className={`text-[10px] ${t.textMuted}`}>Ramp Surface (est.)</div>
+                    <div className={`font-mono font-bold ${t.light ? 'text-rose-600' : 'text-rose-400'}`}>{selectedHotspot.rampSurfaceTempC}°C</div>
+                  </div>
+                  <div className={`px-2.5 py-1 text-center border-r ${t.border} min-w-[80px]`}>
+                    <div className={`text-[10px] ${t.textMuted}`}>Humidity</div>
+                    {hasLiveReading && live!.humidityPct !== null ? (
+                      <div className={`font-mono font-bold ${t.light ? 'text-sky-600' : 'text-sky-400'}`}>{live!.humidityPct}%</div>
+                    ) : (
+                      <div className={`text-[10px] italic ${t.textMuted}`}>—</div>
+                    )}
+                  </div>
+                  <div className="px-2.5 py-1 text-center">
+                    <div className={`text-[10px] ${t.textMuted}`}>Max Exposure (est.)</div>
+                    <div className={`font-mono font-bold ${t.light ? 'text-amber-600' : 'text-amber-400'}`}>{selectedHotspot.tarmacExposureRiskMins}m</div>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
 
           {/* Facility & Cold-Chain Protocol */}

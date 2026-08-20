@@ -641,7 +641,21 @@ export const NewLaneWizardModal: React.FC<NewLaneWizardModalProps> = ({
 
                 {origin.iata.trim() && destination.iata.trim() && (
                   <div className="sm:col-span-2 space-y-2.5">
-                    {viewMode === 'simple' && <SimpleRouteRecommendation options={computedRouteOptions} backupMode={backupModeInfo} />}
+                    {viewMode === 'simple' && (
+                      <SimpleRouteRecommendation
+                        options={computedRouteOptions}
+                        backupMode={backupModeInfo}
+                        onUseBackupCarrier={() => {
+                          const recommended = computedRouteOptions?.find((o) => o.type === 'recommended');
+                          const backupCarrier = recommended?.legs[0]?.carrierRecommendations[1];
+                          const legSeq = recommended?.legs[0]?.legSequence;
+                          if (backupCarrier && legSeq != null) {
+                            setLegCarrierOverrides((prev) => ({ ...prev, [legSeq]: backupCarrier.carrier.id }));
+                          }
+                        }}
+                        onUseBackupMode={() => backupModeInfo && setMode(backupModeInfo.mode)}
+                      />
+                    )}
 
                     {viewMode === 'simple' && (
                       <button

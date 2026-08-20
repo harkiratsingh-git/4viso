@@ -1,7 +1,14 @@
-// Tool execution against Supabase — provider-agnostic; the schema each provider sees for these
-// same tools lives in toolSchema.ts, converted into that provider's wire format by its adapter.
-// Every tool here reads/writes the exact same tables and columns the frontend does — there is no
-// separate, looser path for the assistant to create a lane or read fleet state.
+// Tool declarations for the Gemini function-calling schema (a different shape from Claude's
+// `input_schema` — this one uses `parameters` with uppercase Type enum values, per
+// https://ai.google.dev/gemini-api/docs/function-calling), and their execution against
+// Supabase. The tool *implementations* below are provider-agnostic plain data access — they
+// don't reference Claude or Gemini at all — so they're the same grounding logic
+// ../assistant/tools.ts uses; only the schema declarations were re-authored for Gemini rather
+// than copy-pasted, since that's the part that's actually incompatible between the two APIs.
+//
+// create_lane is intentionally NOT offered here — lane creation is excluded from the
+// unauthenticated demo tier; a signed-in user gets it through the Claude-backed `assistant`
+// function instead.
 import type { SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import {
   mapPortRow,
@@ -16,7 +23,6 @@ import {
   isTempRangeSensitive,
   tempRangeBounds,
   haversineKm,
-  COUNTRY_CODE_NAMES,
   type PortRow,
   type CarrierRow,
   type AdvisoryRow,
@@ -31,7 +37,70 @@ const VALID_TEMP_RANGES = [
   '15°C to 25°C (Controlled Room Temp)',
 ];
 const VALID_MODES = ['Air', 'Sea', 'Road', 'Multimodal'];
-const VALID_PRODUCT_CATEGORIES = ['Vaccines', 'Biologics', 'Insulin', 'Cell Therapy', 'Clinical Trials', 'Active Ingredients'];
+
+// ---------------------------------------------------------------------------
+// Tool schemas — Gemini's functionDeclarations format, passed as
+// `tools: [{ functionDeclarations: GEMINI_TOOL_DECLARATIONS }]` on every generateContent call.
+// ---------------------------------------------------------------------------
+
+export const GEMINI_TOOL_DECLARATIONS = [
+  {
+    name: 'get_lane_status',
+    description:
+      "Get the current status of transport lanes — route, mode, carrier, live temperature, risk score, GDP status, and any active alerts. ALWAYS call this before answering any question about a specific lane or set of lanes; never answer from general knowledge about what a lane's status might be.",
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        lane_code: { type: 'STRING', description: "Exact lane code, e.g. 'MXP-AMS-002'. Omit to use filters across all lanes instead." },
+        risk_level: { type: 'STRING', enum: ['Low', 'Medium', 'High', 'Critical'] },
+        mode: { type: 'STRING', enum: VALID_MODES },
+        status: { type: 'STRING', description: "e.g. 'In Transit', 'Delayed', 'Delivered', 'Temperature Alert'" },
+      },
+    },
+  },
+  {
+    name: 'get_dashboard_summary',
+    description:
+      "Get fleet-wide numbers — total/active/high-risk lane counts, average GDP compliance, active excursions, payload in transit, unresolved critical alerts — read directly from the dashboard_summary view. ALWAYS call this for any fleet-wide question (\"how many lanes\", \"what's our GDP compliance\", etc.) rather than guessing or computing it yourself; this view is the single source of truth the UI itself reads from.",
+    parameters: { type: 'OBJECT', properties: {} },
+  },
+  {
+    name: 'recommend_route',
+    description:
+      'Recommend a route between two hubs, including transport mode, any CEIV Pharma-certified stops needed, and corridor advisory warnings (e.g. Suez Canal). Returns the fastest option and, when a real tradeoff exists, a separately labeled lowest-risk option. Advisory only — never blocks anything.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        origin: { type: 'STRING', description: 'Origin IATA code or city name, e.g. "FRA" or "Frankfurt".' },
+        destination: { type: 'STRING', description: 'Destination IATA code or city name.' },
+        temp_range_type: { type: 'STRING', enum: VALID_TEMP_RANGES },
+        cargo_value_usd: { type: 'NUMBER', description: 'Total shipment value in USD — higher-value cargo weighs more toward the lowest-risk option in the reasoning shown to the user.' },
+      },
+      required: ['origin', 'destination', 'temp_range_type'],
+    },
+  },
+  {
+    name: 'recommend_carrier',
+    description:
+      "Recommend a carrier for a route, weighing reliability score, CEIV Pharma partnership, cold-chain specialization, dedicated network ownership, and — with real weight — whether a Regional Specialist's home market covers this exact route (a regional specialist can outrank a larger international carrier on its own turf). Always returns the reasoning behind the top pick, never a bare ranked list. Advisory only.",
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        origin: { type: 'STRING', description: 'Origin IATA code or city name.' },
+        destination: { type: 'STRING', description: 'Destination IATA code or city name.' },
+        mode: { type: 'STRING', enum: VALID_MODES },
+        temp_range_type: { type: 'STRING', enum: VALID_TEMP_RANGES },
+      },
+      required: ['origin', 'destination', 'mode', 'temp_range_type'],
+    },
+  },
+  {
+    name: 'generate_summary_report',
+    description:
+      'Generate a downloadable .docx summary report covering active lanes by risk level, at-risk lanes, lanes requiring documentation, and a fleet summary table sourced from dashboard_summary. Takes 5-10 seconds; returns a signed download link once ready.',
+    parameters: { type: 'OBJECT', properties: {} },
+  },
+];
 
 // ---------------------------------------------------------------------------
 // Shared data loading
@@ -79,7 +148,8 @@ function formatAdvisories(advisories: AdvisoryRow[]) {
 }
 
 // ---------------------------------------------------------------------------
-// Tool implementations
+// Tool implementations — identical grounding logic to ../assistant/tools.ts, minus
+// toolCreateLane (not offered in the demo tier).
 // ---------------------------------------------------------------------------
 
 async function toolGetLaneStatus(client: SupabaseClient, input: any) {
@@ -200,117 +270,6 @@ async function toolRecommendCarrier(client: SupabaseClient, input: any) {
   };
 }
 
-async function toolCreateLane(client: SupabaseClient, input: any, actor: { name: string; role: string }) {
-  if (!VALID_MODES.includes(input.mode)) return { error: `mode must be one of: ${VALID_MODES.join(', ')}` };
-  if (!VALID_TEMP_RANGES.includes(input.temp_range_type)) return { error: `temp_range_type must be one of: ${VALID_TEMP_RANGES.join(', ')}` };
-  if (!VALID_PRODUCT_CATEGORIES.includes(input.product_category)) return { error: `product_category must be one of: ${VALID_PRODUCT_CATEGORIES.join(', ')}` };
-  if (!input.product_name || !String(input.product_name).trim()) return { error: 'product_name is required.' };
-  if (!input.carrier || !String(input.carrier).trim()) return { error: 'carrier is required.' };
-  const payloadValueUsd = Number(input.payload_value_usd);
-  if (!Number.isFinite(payloadValueUsd) || payloadValueUsd <= 0) return { error: 'payload_value_usd must be a positive number.' };
-
-  const ports = await loadPorts(client);
-  const { port: origin, error: originErr } = resolvePort(ports, input.origin);
-  if (originErr) return { error: originErr };
-  const { port: destination, error: destErr } = resolvePort(ports, input.destination);
-  if (destErr) return { error: destErr };
-  if (origin!.code === destination!.code) return { error: 'Origin and destination must be different hubs.' };
-
-  const carriers = await loadCarriers(client);
-  const matchedCarrier = carriers.find((c) => c.name.toLowerCase() === String(input.carrier).toLowerCase());
-
-  const { min: tempMin, max: tempMax } = tempRangeBounds(input.temp_range_type);
-  const initTemp = Number(((tempMin + tempMax) / 2 + 0.2).toFixed(1));
-  const distanceKm = haversineKm(origin!.coords, destination!.coords);
-  const speedKmh: Record<string, number> = { Air: 800, Sea: 35, Road: 70, Multimodal: 200 };
-  const transitHours = distanceKm / (speedKmh[input.mode] || 500);
-
-  let riskScore = input.mode === 'Air' ? 14 : input.mode === 'Sea' ? 24 : input.mode === 'Road' ? 18 : 20;
-  if (input.temp_range_type.includes('-80') || input.temp_range_type.includes('-20')) riskScore += 10;
-  const { data: riskRpc } = await client.rpc('calculate_lane_base_risk', {
-    p_origin_iata: origin!.code,
-    p_destination_iata: destination!.code,
-    p_mode: input.mode,
-    p_temp_range_type: input.temp_range_type,
-  });
-  if (riskRpc && riskRpc[0]) riskScore = Number(riskRpc[0].risk_score) || riskScore;
-  const riskLevel = riskScore >= 50 ? 'Critical' : riskScore >= 35 ? 'High' : riskScore >= 20 ? 'Medium' : 'Low';
-
-  const now = new Date();
-  const laneCode = `${origin!.code}-${destination!.code}-${Math.floor(10 + Math.random() * 89)}`;
-  const id = `lane-${Date.now()}`;
-
-  const row = {
-    id,
-    lane_code: laneCode,
-    origin_city: origin!.city,
-    origin_iata: origin!.code,
-    origin_country: origin!.country,
-    origin_lat: origin!.coords[0],
-    origin_lng: origin!.coords[1],
-    destination_city: destination!.city,
-    destination_iata: destination!.code,
-    destination_country: destination!.country,
-    destination_lat: destination!.coords[0],
-    destination_lng: destination!.coords[1],
-    stops: [],
-    carrier: input.carrier,
-    carrier_id: matchedCarrier?.id ?? null,
-    mode: input.mode,
-    product_name: input.product_name,
-    product_category: input.product_category,
-    batch_number: input.batch_number || `BATCH-${now.getUTCFullYear()}-${Math.floor(100 + Math.random() * 899)}`,
-    payload_value_usd: payloadValueUsd,
-    temp_range_type: input.temp_range_type,
-    temp_min: tempMin,
-    temp_max: tempMax,
-    current_temp: initTemp,
-    mkt_temp: initTemp,
-    gdp_compliance_rate: 99.0,
-    gdp_status: 'Compliant',
-    risk_score: riskScore,
-    risk_level: riskLevel,
-    status: 'Active',
-    transit_progress: 5,
-    departure_time: now.toISOString().replace('T', ' ').slice(0, 19) + ' UTC',
-    eta: new Date(now.getTime() + transitHours * 3600_000).toISOString().replace('T', ' ').slice(0, 16) + ' UTC',
-    delay_hours: 0,
-    last_updated: now.toISOString(),
-  };
-
-  const { error: insertError } = await client.from('transport_lanes').insert(row);
-  if (insertError) return { error: `Failed to create lane: ${insertError.message}` };
-
-  await client.from('temperature_telemetry').insert([
-    { lane_id: id, timestamp: '10:00', core_temp: initTemp, ambient_temp: 21.0, surface_temp: initTemp + 0.1, min_permitted: tempMin, max_permitted: tempMax, humidity: 45, battery_level: 100, shock_g: 0.1, is_excursion: false },
-  ]);
-
-  await client.from('audit_trail').insert({
-    id: `log-${Date.now()}`,
-    timestamp: now.toISOString().replace('T', ' ').slice(0, 19) + ' UTC',
-    actor: actor.name,
-    role: actor.role,
-    lane_code: laneCode,
-    action: 'New Transport Lane Provisioned (via Assistant)',
-    category: 'LANE_CONFIGURATION',
-    details: `Provisioned ${input.mode} lane ${laneCode} (${origin!.code} -> ${destination!.code}) via conversational assistant with threshold alert automation.`,
-    hash: '0x' + Math.random().toString(16).slice(2, 18),
-    status: 'VERIFIED',
-  });
-
-  return {
-    created: true,
-    lane_code: laneCode,
-    origin: origin!.code,
-    destination: destination!.code,
-    mode: input.mode,
-    carrier: input.carrier,
-    risk_score: riskScore,
-    risk_level: riskLevel,
-    eta: row.eta,
-  };
-}
-
 async function toolGenerateSummaryReport(client: SupabaseClient) {
   const { buffer, filename } = await buildSummaryReportDocx(client);
 
@@ -330,12 +289,7 @@ async function toolGenerateSummaryReport(client: SupabaseClient) {
 // Dispatch
 // ---------------------------------------------------------------------------
 
-export async function executeTool(
-  name: string,
-  input: any,
-  client: SupabaseClient,
-  actor: { name: string; role: string }
-): Promise<any> {
+export async function executeTool(name: string, input: any, client: SupabaseClient): Promise<any> {
   switch (name) {
     case 'get_lane_status':
       return toolGetLaneStatus(client, input);
@@ -345,10 +299,10 @@ export async function executeTool(
       return toolRecommendRoute(client, input);
     case 'recommend_carrier':
       return toolRecommendCarrier(client, input);
-    case 'create_lane':
-      return toolCreateLane(client, input, actor);
     case 'generate_summary_report':
       return toolGenerateSummaryReport(client);
+    case 'create_lane':
+      return { error: 'Lane creation is not available in the demo assistant — sign in for full access.' };
     default:
       return { error: `Unknown tool: ${name}` };
   }

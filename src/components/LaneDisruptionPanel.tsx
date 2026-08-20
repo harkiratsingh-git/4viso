@@ -19,6 +19,8 @@ import { getAirportCoords } from '../utils/geo';
 import { PortEntry } from '../utils/ports';
 import { usePorts } from '../contexts/PortsContext';
 import { useThemeTokens } from '../contexts/ViewModeContext';
+import { recomputeLaneRiskFromLegScores, resolutionMessage, RecomputedLaneRisk } from '../utils/laneRiskRecompute';
+import { getEffectiveRiskLevel } from '../utils/laneRisk';
 
 interface LaneDisruptionPanelProps {
   lane: TransportLane;
@@ -27,6 +29,9 @@ interface LaneDisruptionPanelProps {
    *  isn't only reachable from an inline toggle buried inside this panel. */
   showReportForm: boolean;
   onShowReportFormChange: (show: boolean) => void;
+  /** Part 1: same sink LaneCarrierAssignmentPanel uses — a carrier replaced/extended here must
+   *  trigger the same recompute a manual reassignment would. */
+  onRiskUpdated: (laneId: string, risk: RecomputedLaneRisk) => void;
 }
 
 const DISRUPTION_TYPES: LaneDisruption['disruptionType'][] = ['Carrier Incapacitated', 'Missing Documentation', 'Customs Detention', 'Other'];
@@ -44,7 +49,7 @@ function waypointForPort(code: string, ports: PortEntry[]): RouteWaypoint {
  * user id to attribute the report to, so this panel stays read-only (in fact invisible, since
  * there's nothing to report against) outside dataSource === 'cloud'.
  */
-export const LaneDisruptionPanel: React.FC<LaneDisruptionPanelProps> = ({ lane, dataSource, showReportForm, onShowReportFormChange }) => {
+export const LaneDisruptionPanel: React.FC<LaneDisruptionPanelProps> = ({ lane, dataSource, showReportForm, onShowReportFormChange, onRiskUpdated }) => {
   const t = useThemeTokens();
   const { ports } = usePorts();
   const [legs, setLegs] = useState<LaneLeg[]>([]);
@@ -204,6 +209,7 @@ export const LaneDisruptionPanel: React.FC<LaneDisruptionPanelProps> = ({ lane, 
               currentUserRole={currentUser.role}
               ports={ports}
               onResolved={loadAll}
+              onRiskUpdated={onRiskUpdated}
             />
           ))}
         </div>
@@ -223,7 +229,8 @@ const DisruptionCard: React.FC<{
   currentUserRole: string;
   ports: PortEntry[];
   onResolved: () => void;
-}> = ({ disruption, lane, legs, carriers, performanceByCarrierId, currentUserId, currentUserName, currentUserRole, ports, onResolved }) => {
+  onRiskUpdated: (laneId: string, risk: RecomputedLaneRisk) => void;
+}> = ({ disruption, lane, legs, carriers, performanceByCarrierId, currentUserId, currentUserName, currentUserRole, ports, onResolved, onRiskUpdated }) => {
   const t = useThemeTokens();
   const [canExtend, setCanExtend] = useState<boolean | null>(null);
   const [existingCert, setExistingCert] = useState<{ carrierName: string; reviewedAt: string | null; uploadedAt: string } | null>(null);
@@ -317,7 +324,22 @@ const DisruptionCard: React.FC<{
       resolvedByRole: currentUserRole,
     });
     setResolving(false);
-    setResolveMessage(result.message);
+
+    if (result.success && resolutionType !== 'Resolved - Other') {
+      // Part 1: a carrier replaced/extended is a real carrier-assignment change — recompute the
+      // lane's composite risk from every leg's known risk score (route/mode are unchanged by a
+      // carrier swap, so this mostly confirms the risk honestly rather than manufacturing a
+      // drop, per the resolved-vs-transferring split below).
+      const previousLevel = getEffectiveRiskLevel(lane);
+      const legScores = legs.map((l) => l.legRiskScore).filter((s): s is number => s != null);
+      const recomputed = recomputeLaneRiskFromLegScores(legScores);
+      onRiskUpdated(lane.id, recomputed);
+      const carrierName = newCarrierId ? carriers.find((c) => c.id === newCarrierId)?.name ?? 'the assigned carrier' : disruptedLeg?.carrierId ? carriers.find((c) => c.id === disruptedLeg.carrierId)?.name ?? 'the existing carrier' : 'the existing carrier';
+      setResolveMessage(`${result.message} ${resolutionMessage(previousLevel, recomputed, carrierName)}`);
+    } else {
+      setResolveMessage(result.message);
+    }
+
     if (result.success) {
       setResolutionMode('none');
       onResolved();
@@ -501,7 +523,17 @@ const DisruptionCard: React.FC<{
             </div>
           )}
 
-          {resolveMessage && <p className={`text-[10px] ${t.textFaint}`}>{resolveMessage}</p>}
+          {resolveMessage && (
+            <p className={`text-[10px] px-2 py-1.5 rounded-lg border ${
+              resolveMessage.includes('Resolved —')
+                ? t.light ? 'bg-emerald-50 border-emerald-300 text-emerald-700' : 'bg-emerald-950/30 border-emerald-800/50 text-emerald-300'
+                : resolveMessage.includes('Transferring to')
+                  ? t.light ? 'bg-teal-50 border-teal-300 text-teal-700' : 'bg-teal-950/30 border-teal-800/50 text-teal-300'
+                  : `border-transparent ${t.textFaint}`
+            }`}>
+              {resolveMessage}
+            </p>
+          )}
         </div>
       )}
     </div>

@@ -4,6 +4,7 @@ import {
   Anchor,
   Wind,
   SunMedium,
+  Snowflake,
   AlertCircle,
   ChevronRight,
   Clock,
@@ -34,6 +35,8 @@ export const WeatherDisruptions: React.FC<WeatherDisruptionsProps> = ({
         return <Anchor className={`w-4 h-4 ${t.light ? 'text-amber-500' : 'text-amber-400'}`} />;
       case 'Heatwave Warning':
         return <SunMedium className={`w-4 h-4 ${t.light ? 'text-orange-500' : 'text-orange-400'}`} />;
+      case 'Freeze Risk':
+        return <Snowflake className={`w-4 h-4 ${t.light ? 'text-indigo-500' : 'text-indigo-400'}`} />;
       case 'Low Visibility':
         return <Wind className={`w-4 h-4 ${t.light ? 'text-sky-500' : 'text-sky-400'}`} />;
       case 'Corridor Advisory':

@@ -1,7 +1,16 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Bot, Send, X, Sparkles, FileDown, ArrowUpRight, AlertTriangle, Loader2 } from 'lucide-react';
 import { SupabaseUser } from '../types';
-import { sendAssistantMessage, AssistantMessage, AssistantStructuredResult } from '../services/assistantService';
+import {
+  sendAssistantMessage,
+  sendDemoAssistantMessage,
+  AssistantMessage,
+  AssistantStructuredResult,
+  DemoStructuredResult,
+  DemoLimitReachedError,
+  NoApiKeyConnectedError,
+} from '../services/assistantService';
+import { getSupabaseClient } from '../services/supabaseService';
 import { useThemeTokens, ThemeTokens } from '../contexts/ViewModeContext';
 
 interface ChatAssistantProps {
@@ -9,7 +18,12 @@ interface ChatAssistantProps {
   onClose: () => void;
   currentUser: SupabaseUser;
   dataSource: 'loading' | 'cloud' | 'local';
+  isAuthenticated: boolean;
   onLaneCreated: (laneCode: string) => void;
+  onRequireSignIn: () => void;
+  /** Sent to Settings' AI Provider section — fires when the Advanced assistant reports no
+   *  connected key (or an unresolved choice between more than one connected provider). */
+  onRequireApiKey: () => void;
 }
 
 interface ChatTurn {
@@ -91,11 +105,15 @@ function StructuredResultCard({ item, onLaneCreated, t }: { item: AssistantStruc
  * `assistant` Supabase Edge Function, which holds the Anthropic API key and does the actual
  * tool-calling against live data; this component only renders the conversation.
  */
-export const ChatAssistant: React.FC<ChatAssistantProps> = ({ isOpen, onClose, currentUser, dataSource, onLaneCreated }) => {
+export const ChatAssistant: React.FC<ChatAssistantProps> = ({ isOpen, onClose, currentUser, dataSource, isAuthenticated, onLaneCreated, onRequireSignIn, onRequireApiKey }) => {
   const t = useThemeTokens();
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [input, setInput] = useState('');
   const [isSending, setIsSending] = useState(false);
+  const [demoUsage, setDemoUsage] = useState<{ remaining: number; cap: number } | null>(null);
+  const [demoLimitMessage, setDemoLimitMessage] = useState<string | null>(null);
+  const [noApiKeyMessage, setNoApiKeyMessage] = useState<string | null>(null);
+  const isBlocked = !!demoLimitMessage || !!noApiKeyMessage;
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -108,11 +126,21 @@ export const ChatAssistant: React.FC<ChatAssistantProps> = ({ isOpen, onClose, c
   }, [turns, isSending]);
 
   const actor = { name: currentUser.name, role: currentUser.role };
-  const notConnected = dataSource !== 'cloud';
+  // The assistant only needs a configured Supabase project to reach its Edge Function — it
+  // doesn't need dataSource === 'cloud' specifically, which just means "real lane data loaded."
+  // A demo/local session with no lanes yet still has a real Supabase project behind it and
+  // should still be able to talk to the assistant (Part 4: demo mode works without login).
+  const notConnected = dataSource === 'loading' || !getSupabaseClient();
+  // The Gemini-backed demo assistant (assistant-demo) handles every unauthenticated visitor and
+  // any authenticated session that isn't currently viewing real cloud data — same UI, same
+  // conversation, a different backend function underneath. Only an authenticated session on
+  // cloud data reaches the Claude-backed `assistant` function, which is the only one that can
+  // create lanes.
+  const useDemoBackend = !isAuthenticated || dataSource !== 'cloud';
 
   const handleSend = async (textOverride?: string) => {
     const text = (textOverride ?? input).trim();
-    if (!text || isSending || notConnected) return;
+    if (!text || isSending || notConnected || isBlocked) return;
 
     const nextTurns: ChatTurn[] = [...turns, { role: 'user', content: text }];
     setTurns(nextTurns);
@@ -121,9 +149,26 @@ export const ChatAssistant: React.FC<ChatAssistantProps> = ({ isOpen, onClose, c
 
     try {
       const history: AssistantMessage[] = nextTurns.map((t) => ({ role: t.role, content: t.content }));
-      const response = await sendAssistantMessage(history, actor);
-      setTurns((prev) => [...prev, { role: 'assistant', content: response.reply, structured: response.structured }]);
+      if (useDemoBackend) {
+        const response = await sendDemoAssistantMessage(history, actor);
+        setTurns((prev) => [...prev, { role: 'assistant', content: response.reply, structured: response.structured }]);
+        setDemoUsage({ remaining: response.sessionRequestsRemaining, cap: response.sessionRequestsCap });
+      } else {
+        const response = await sendAssistantMessage(history, actor);
+        setTurns((prev) => [...prev, { role: 'assistant', content: response.reply, structured: response.structured }]);
+      }
     } catch (err) {
+      if (err instanceof DemoLimitReachedError) {
+        setDemoLimitMessage(err.message);
+        setDemoUsage((prev) => (prev ? { ...prev, remaining: 0 } : { remaining: 0, cap: 0 }));
+        setTurns((prev) => [...prev, { role: 'assistant', isError: true, content: err.message }]);
+        return;
+      }
+      if (err instanceof NoApiKeyConnectedError) {
+        setNoApiKeyMessage(err.message);
+        setTurns((prev) => [...prev, { role: 'assistant', isError: true, content: err.message }]);
+        return;
+      }
       setTurns((prev) => [
         ...prev,
         {
@@ -131,7 +176,9 @@ export const ChatAssistant: React.FC<ChatAssistantProps> = ({ isOpen, onClose, c
           isError: true,
           content:
             err instanceof Error && err.message.includes('Failed to send a request')
-              ? "The assistant isn't reachable — the Supabase Edge Function may not be deployed yet. Ask whoever manages this project's cloud setup to run `supabase functions deploy assistant` and set the ANTHROPIC_API_KEY secret."
+              ? `The assistant isn't reachable — the Supabase Edge Function may not be deployed yet. Ask whoever manages this project's cloud setup to run \`supabase functions deploy ${
+                  useDemoBackend ? 'assistant-demo` and set the GEMINI_API_KEY secret' : 'assistant`'
+                }.`
               : `The assistant hit an error: ${err instanceof Error ? err.message : String(err)}`,
         },
       ]);
@@ -164,7 +211,54 @@ export const ChatAssistant: React.FC<ChatAssistantProps> = ({ isOpen, onClose, c
         {notConnected && (
           <div className={`mx-4 mt-3 p-2.5 rounded-lg text-[11px] flex items-start gap-2 flex-shrink-0 ${t.cardBgSunken} border ${t.border} ${t.textMuted}`}>
             <AlertTriangle className={`w-3.5 h-3.5 flex-shrink-0 mt-0.5 ${t.light ? 'text-amber-600' : 'text-amber-400'}`} />
-            <span>The assistant only works when connected to Supabase Cloud — currently running on the local demo dataset.</span>
+            <span>The assistant needs a connected Supabase project — none is configured right now.</span>
+          </div>
+        )}
+
+        {!notConnected && useDemoBackend && demoUsage && !isBlocked && (
+          <div className={`mx-4 mt-3 flex-shrink-0`}>
+            <div className={`flex items-center justify-between text-[10px] mb-1 ${t.textFaint}`}>
+              <span>Demo usage</span>
+              <span>{Math.max(0, demoUsage.cap - demoUsage.remaining).toLocaleString()} of {demoUsage.cap.toLocaleString()} questions used today</span>
+            </div>
+            <div className={`w-full h-1 rounded-full overflow-hidden ${t.chipBg}`}>
+              <div
+                className={`h-full rounded-full ${demoUsage.remaining < demoUsage.cap * 0.2 ? 'bg-amber-500' : 'bg-teal-500'}`}
+                style={{ width: `${Math.min(100, Math.round(((demoUsage.cap - demoUsage.remaining) / demoUsage.cap) * 100))}%` }}
+              />
+            </div>
+          </div>
+        )}
+
+        {!notConnected && demoLimitMessage && (
+          <div className={`mx-4 mt-3 p-3 rounded-lg text-[11px] flex flex-col gap-2 flex-shrink-0 border ${
+            t.light ? 'bg-amber-50 border-amber-300 text-amber-800' : 'bg-amber-950/30 border-amber-800/50 text-amber-200'
+          }`}>
+            <span>{demoLimitMessage}</span>
+            <button
+              onClick={onRequireSignIn}
+              className={`self-start px-3 py-1.5 rounded-lg text-[11px] font-bold ${
+                t.light ? 'bg-amber-600 hover:bg-amber-500 text-white' : 'bg-amber-500 hover:bg-amber-400 text-slate-950'
+              }`}
+            >
+              Sign in
+            </button>
+          </div>
+        )}
+
+        {!notConnected && noApiKeyMessage && (
+          <div className={`mx-4 mt-3 p-3 rounded-lg text-[11px] flex flex-col gap-2 flex-shrink-0 border ${
+            t.light ? 'bg-amber-50 border-amber-300 text-amber-800' : 'bg-amber-950/30 border-amber-800/50 text-amber-200'
+          }`}>
+            <span>{noApiKeyMessage}</span>
+            <button
+              onClick={onRequireApiKey}
+              className={`self-start px-3 py-1.5 rounded-lg text-[11px] font-bold ${
+                t.light ? 'bg-amber-600 hover:bg-amber-500 text-white' : 'bg-amber-500 hover:bg-amber-400 text-slate-950'
+              }`}
+            >
+              Open Settings
+            </button>
           </div>
         )}
 
@@ -177,7 +271,7 @@ export const ChatAssistant: React.FC<ChatAssistantProps> = ({ isOpen, onClose, c
                 <button
                   key={p}
                   onClick={() => handleSend(p)}
-                  disabled={notConnected}
+                  disabled={notConnected || isBlocked}
                   className={`w-full text-left px-3 py-2 rounded-lg border transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
                     t.light ? 'bg-slate-50 border-slate-200 hover:border-teal-400 text-slate-700' : 'bg-slate-950/80 border-slate-800 hover:border-teal-500/40 text-slate-300'
                   }`}
@@ -230,14 +324,20 @@ export const ChatAssistant: React.FC<ChatAssistantProps> = ({ isOpen, onClose, c
                 handleSend();
               }
             }}
-            placeholder={notConnected ? 'Connect to Supabase Cloud to use the assistant…' : 'Ask about a lane, request a recommendation, or generate a report…'}
-            disabled={notConnected}
+            placeholder={
+              notConnected
+                ? 'No Supabase project configured…'
+                : demoLimitMessage || noApiKeyMessage
+                  ? (demoLimitMessage || noApiKeyMessage) as string
+                  : 'Ask about a lane, request a recommendation, or generate a report…'
+            }
+            disabled={notConnected || isBlocked}
             rows={1}
             className={`flex-1 ${t.cardBg} border ${t.light ? 'border-slate-300' : 'border-slate-700'} rounded-lg px-3 py-2 ${t.textPrimary} text-xs resize-none focus:outline-none focus:border-teal-500 disabled:opacity-50`}
           />
           <button
             onClick={() => handleSend()}
-            disabled={notConnected || isSending || !input.trim()}
+            disabled={notConnected || isBlocked || isSending || !input.trim()}
             className="min-w-[40px] min-h-[40px] flex items-center justify-center rounded-lg bg-teal-600 hover:bg-teal-500 text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             aria-label="Send message"
           >

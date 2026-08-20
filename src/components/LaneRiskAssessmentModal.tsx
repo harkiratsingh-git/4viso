@@ -21,7 +21,8 @@ import {
 } from 'lucide-react';
 import { TransportLane, RiskFactor, RiskLevel } from '../types';
 import { getRiskColor, getStatusColor, formatCurrency } from '../utils/formatters';
-import { isLaneExcursing, getEffectiveRiskLevel, getEffectiveRiskScore } from '../utils/laneRisk';
+import { isLaneExcursing, getEffectiveRiskLevel, getEffectiveRiskScore, isHighOrCritical } from '../utils/laneRisk';
+import { RecomputedLaneRisk } from '../utils/laneRiskRecompute';
 import { generateDefaultRiskFactors } from '../utils/riskFactors';
 import { LaneCarrierAssignmentPanel } from './LaneCarrierAssignmentPanel';
 import { LaneDisruptionPanel } from './LaneDisruptionPanel';
@@ -34,8 +35,13 @@ interface LaneRiskAssessmentModalProps {
   onManageStops: (lane: TransportLane) => void;
   onEditLane: (lane: TransportLane) => void;
   onAddRiskFactor: (laneId: string, risk: RiskFactor) => void;
-  onExecuteMitigation: (laneId: string, risk: RiskFactor) => void;
+  onExecuteMitigation: (laneId: string, risk: RiskFactor) => RecomputedLaneRisk | null;
   onHydrateRiskFactors: (laneId: string, risks: RiskFactor[]) => void;
+  /** Part 1: shared risk-recompute sink for both the per-leg carrier panel and the Phase 4
+   *  disruption panel embedded below, so a carrier/route change from either one updates the
+   *  lane's stored risk_score/risk_level/gdp_status the same way Edit Lane and Execute
+   *  Mitigation do. */
+  onLaneRiskUpdated: (laneId: string, risk: RecomputedLaneRisk) => void;
   dataSource: 'loading' | 'cloud' | 'local';
 }
 
@@ -49,6 +55,7 @@ export const LaneRiskAssessmentModal: React.FC<LaneRiskAssessmentModalProps> = (
   onAddRiskFactor,
   onExecuteMitigation,
   onHydrateRiskFactors,
+  onLaneRiskUpdated,
 }) => {
   const t = useThemeTokens();
   const [selectedRiskCategory, setSelectedRiskCategory] = useState<string>('All');
@@ -103,9 +110,15 @@ export const LaneRiskAssessmentModal: React.FC<LaneRiskAssessmentModalProps> = (
   }, [lane.id, lane.risks.length]);
 
   const handleExecuteMitigation = (risk: RiskFactor) => {
-    onExecuteMitigation(lane.id, risk);
+    const previousLevel = effectiveRiskLevel;
+    const recomputed = onExecuteMitigation(lane.id, risk);
     const capaNote = risk.category === 'Regulatory & GDP' ? ' A CAPA has been opened.' : '';
-    setActionSuccessMsg(`Mitigation actioned: "${risk.title}". Logged to audit trail.${capaNote}`);
+    const resolvedNote = recomputed && isHighOrCritical(previousLevel) && !isHighOrCritical(recomputed.riskLevel)
+      ? ` Resolved — lane risk now ${recomputed.riskScore}% (${recomputed.riskLevel}).`
+      : recomputed
+        ? ` Risk re-assessed at ${recomputed.riskScore}% (${recomputed.riskLevel}).`
+        : '';
+    setActionSuccessMsg(`Mitigation actioned: "${risk.title}". Logged to audit trail.${capaNote}${resolvedNote}`);
     setTimeout(() => setActionSuccessMsg(null), 4000);
   };
 
@@ -380,13 +393,14 @@ export const LaneRiskAssessmentModal: React.FC<LaneRiskAssessmentModalProps> = (
               </div>
             </div>
 
-          <LaneCarrierAssignmentPanel lane={lane} dataSource={dataSource} />
+          <LaneCarrierAssignmentPanel lane={lane} dataSource={dataSource} onRiskUpdated={onLaneRiskUpdated} />
 
           <LaneDisruptionPanel
             lane={lane}
             dataSource={dataSource}
             showReportForm={showDisruptionReportForm}
             onShowReportFormChange={setShowDisruptionReportForm}
+            onRiskUpdated={onLaneRiskUpdated}
           />
 
           {/* Section: Composite Risk Category Matrix */}

@@ -14,6 +14,10 @@ interface SimpleRouteRecommendationProps {
    *  Air lane), computed separately from the same-mode backup carrier below. Null when no
    *  reasonable alternate mode exists for this route — never force one just to fill the field. */
   backupMode?: BackupModeInfo | null;
+  /** Part 2: both backups are real one-click actions, not just descriptive text — clicking
+   *  either actually applies the swap to the draft lane being built. */
+  onUseBackupCarrier?: () => void;
+  onUseBackupMode?: () => void;
 }
 
 /**
@@ -23,7 +27,7 @@ interface SimpleRouteRecommendationProps {
  * Simple mode hides multi-stop editing), rather than a second full route that would render
  * identically to the first with nothing to differentiate it.
  */
-export const SimpleRouteRecommendation: React.FC<SimpleRouteRecommendationProps> = ({ options, backupMode }) => {
+export const SimpleRouteRecommendation: React.FC<SimpleRouteRecommendationProps> = ({ options, backupMode, onUseBackupCarrier, onUseBackupMode }) => {
   const t = useThemeTokens();
   const recommended = options?.find((o) => o.type === 'recommended');
 
@@ -51,20 +55,38 @@ export const SimpleRouteRecommendation: React.FC<SimpleRouteRecommendationProps>
       </div>
 
       {recommended.legs[0]?.topCarrierPick && (
-        <p className={`text-sm ${t.textSecondary}`}>
+        <div className={`text-sm ${t.textSecondary}`}>
           Carrier: <strong className={t.textPrimary}>{recommended.legs[0].topCarrierPick.carrier.name}</strong>
           {(recommended.legs[0].carrierRecommendations[1] || backupMode) && (
-            <span className={`block text-xs mt-1 ${t.textMuted}`}>
+            <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
               {recommended.legs[0].carrierRecommendations[1] && (
-                <>Backup carrier: <strong className={t.textSecondary}>{recommended.legs[0].carrierRecommendations[1].carrier.name}</strong> ({recommended.mode})</>
+                <button
+                  type="button"
+                  onClick={onUseBackupCarrier}
+                  disabled={!onUseBackupCarrier}
+                  className={`text-xs px-2 py-1 rounded-lg border font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
+                    t.light ? 'bg-white hover:bg-emerald-100 text-emerald-700 border-emerald-300' : 'bg-slate-900/60 hover:bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                  }`}
+                >
+                  Use backup carrier: {recommended.legs[0].carrierRecommendations[1].carrier.name} ({recommended.mode})
+                </button>
               )}
-              {recommended.legs[0].carrierRecommendations[1] && backupMode && <span className="mx-1.5">·</span>}
               {backupMode && (
-                <>Backup mode: <strong className={t.textSecondary}>{backupMode.mode}</strong>{backupMode.carrierName ? ` via ${backupMode.carrierName}` : ''}</>
+                <button
+                  type="button"
+                  onClick={onUseBackupMode}
+                  disabled={!onUseBackupMode}
+                  className={`text-xs px-2 py-1 rounded-lg border font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
+                    t.light ? 'bg-white hover:bg-teal-100 text-teal-700 border-teal-300' : 'bg-slate-900/60 hover:bg-teal-500/20 text-teal-300 border-teal-500/30'
+                  }`}
+                  title={backupMode.reason}
+                >
+                  Use backup mode: {backupMode.mode}{backupMode.carrierName ? ` via ${backupMode.carrierName}` : ''}
+                </button>
               )}
-            </span>
+            </div>
           )}
-        </p>
+        </div>
       )}
 
       <div className={`mt-3 pt-3 border-t flex items-center gap-4 text-xs ${t.light ? 'border-emerald-200' : 'border-emerald-900/40'} ${t.textMuted}`}>

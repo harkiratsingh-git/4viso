@@ -16,7 +16,8 @@ import {
   SupabaseUser,
   CorridorAdvisory,
   Carrier,
-  CarrierPerformanceSummary
+  CarrierPerformanceSummary,
+  WeatherDisruption
 } from './types';
 import { Sidebar, AppTab } from './components/Sidebar';
 import { TopBar } from './components/TopBar';
@@ -30,8 +31,10 @@ import { ManageLaneStopsModal } from './components/ManageLaneStopsModal';
 import { LiveIndicator } from './components/LiveIndicator';
 import { EditLaneModal } from './components/EditLaneModal';
 import { CertificationIssue } from './utils/ports';
-import { isLaneExcursing, isLaneHighRisk, getEffectiveRiskLevel, getEffectiveRiskScore } from './utils/laneRisk';
+import { isLaneExcursing, isLaneHighRisk, getEffectiveRiskLevel, getEffectiveRiskScore, deriveRiskLevelFromScore, gdpStatusForRiskLevel } from './utils/laneRisk';
+import { recomputeLaneRisk, recomputeLaneRiskFromLegScores, resolutionMessage, syncRecomputedRisk, RecomputedLaneRisk } from './utils/laneRiskRecompute';
 import { deriveDisruptionsFromAdvisories } from './utils/corridorAdvisories';
+import { fetchWeatherHazardDisruptions } from './services/weatherService';
 import { useViewMode } from './contexts/ViewModeContext';
 import { SimpleDashboard } from './components/SimpleDashboard';
 import { formatUtcCompact, formatUtcCompactNoSeconds } from './utils/dateFormat';
@@ -44,7 +47,7 @@ import { GdpComplianceTrend } from './components/GdpComplianceTrend';
 import { AuditTrailView } from './components/AuditTrailView';
 import { AutomatedReportingModal } from './components/AutomatedReportingModal';
 import { SupabaseSyncModal } from './components/SupabaseSyncModal';
-import { SettingsPage } from './components/SettingsPage';
+import { SettingsPage, SettingsTab } from './components/SettingsPage';
 import { LoginPage } from './components/LoginPage';
 import { PlanSelectionModal } from './components/PlanSelectionModal';
 import { LandingPage } from './components/LandingPage';
@@ -131,6 +134,7 @@ export default function App() {
   // Supabase Auth session. pendingUnlockTarget remembers that the visitor was mid-attempt to
   // reach Advanced mode so a successful sign-in lands them there instead of just the dashboard.
   const [showPlanModal, setShowPlanModal] = useState<boolean>(false);
+  const [planModalContext, setPlanModalContext] = useState<'advanced' | 'signin'>('advanced');
   const [pendingUnlockTarget, setPendingUnlockTarget] = useState<'ADVANCED_MODE' | null>(null);
   
   const [filters, setFilters] = useState<FilterState>({
@@ -155,6 +159,18 @@ export default function App() {
   const [isCloudSyncOpen, setIsCloudSyncOpen] = useState<boolean>(false);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState<boolean>(false);
   const [isChatAssistantOpen, setIsChatAssistantOpen] = useState<boolean>(false);
+  const [settingsFocusTab, setSettingsFocusTab] = useState<{ tab: SettingsTab } | null>(null);
+
+  // Surfaced after a carrier/route change is saved and the lane's risk has been recomputed —
+  // EditLaneModal closes itself immediately on save, so this is the only place left to show the
+  // "resolved" / "transferring" confirmation for that specific path (every other recompute path
+  // stays on-screen and shows its own inline message instead).
+  const [riskResolutionToast, setRiskResolutionToast] = useState<string | null>(null);
+  useEffect(() => {
+    if (!riskResolutionToast) return;
+    const timer = setTimeout(() => setRiskResolutionToast(null), 5000);
+    return () => clearTimeout(timer);
+  }, [riskResolutionToast]);
 
   // Simulation engine state
   const [isSimulating, setIsSimulating] = useState<boolean>(true);
@@ -455,6 +471,7 @@ export default function App() {
       return;
     }
     setPendingUnlockTarget(target);
+    setPlanModalContext('advanced');
     setShowPlanModal(true);
   };
 
@@ -529,23 +546,34 @@ export default function App() {
   // visible status and logs the action; Regulatory & GDP items additionally open a real CAPA
   // (cloud: capa_records: local: an equivalent locally-synthesized record, so the flow is
   // identical either way, just not durably saved outside cloud).
-  const handleExecuteMitigation = (laneId: string, risk: RiskFactor) => {
+  // Mirrors handleAddRiskFactor's inverse: that handler bumps riskScore up by score*0.2 when a
+  // new risk is logged, so actioning one brings it back down by the same amount — the lane's
+  // stored composite risk actually moves when a risk factor is mitigated, instead of only the
+  // risk factor's own status changing while the lane sits at whatever score it had before.
+  const handleExecuteMitigation = (laneId: string, risk: RiskFactor): RecomputedLaneRisk | null => {
+    const targetLane = lanes.find(l => l.id === laneId);
+    if (!targetLane) return null;
+
+    const newScore = Math.max(0, Math.round(targetLane.riskScore - risk.score * 0.2));
+    const newLevel = deriveRiskLevelFromScore(newScore);
+    const recomputed: RecomputedLaneRisk = { riskScore: newScore, riskLevel: newLevel, gdpStatus: gdpStatusForRiskLevel(newLevel) };
+
     setLanes(prev => prev.map(l => (
       l.id === laneId
-        ? { ...l, risks: l.risks.map(r => (r.id === risk.id ? { ...r, status: 'Mitigation Actioned' as const } : r)) }
+        ? { ...l, risks: l.risks.map(r => (r.id === risk.id ? { ...r, status: 'Mitigation Actioned' as const } : r)), ...recomputed }
         : l
     )));
+    syncRecomputedRisk(laneId, recomputed, dataSource);
 
-    const targetLane = lanes.find(l => l.id === laneId);
-    const laneCode = targetLane?.laneCode || laneId;
+    const laneCode = targetLane.laneCode;
     appendAuditLog(
       laneCode,
       `Mitigation Executed: ${risk.title}`,
       'MITIGATION_EXECUTED',
-      risk.mitigationStrategy
+      `${risk.mitigationStrategy} Risk re-assessed at ${recomputed.riskScore}% (${recomputed.riskLevel}).`
     );
 
-    if (risk.category !== 'Regulatory & GDP' || !targetLane) return;
+    if (risk.category !== 'Regulatory & GDP') return recomputed;
 
     if (dataSource === 'cloud') {
       createMitigationCapa({
@@ -583,6 +611,15 @@ export default function App() {
         ...prev,
       ]);
     }
+    return recomputed;
+  };
+
+  // Part 1: shared sink for the per-leg carrier assignment panel and the Phase 4 disruption
+  // panel, both of which recompute the lane's real composite risk themselves (they have the
+  // per-leg risk scores in hand already) and just need it written into lanes state + synced.
+  const handleLaneRiskUpdated = (laneId: string, risk: RecomputedLaneRisk) => {
+    setLanes(prev => prev.map(l => (l.id === laneId ? { ...l, ...risk } : l)));
+    syncRecomputedRisk(laneId, risk, dataSource);
   };
 
   // Update a lane's intermediate stops from the Manage Route page
@@ -606,28 +643,47 @@ export default function App() {
     }
   };
 
-  // Full lane edit (emergency reroute, carrier/cargo change, etc.) from the Edit Lane page
-  const handleUpdateLane = (
+  // Full lane edit (emergency reroute, carrier/cargo change, etc.) from the Edit Lane page.
+  // Recomputes the lane's real composite risk against the *new* route/mode/temp range (Part 1)
+  // rather than leaving risk_score/risk_level/gdp_status as whatever they were before the edit —
+  // async because that recompute may call the live calculate_lane_base_risk RPC.
+  const handleUpdateLane = async (
     laneId: string,
     updates: Parameters<React.ComponentProps<typeof EditLaneModal>['onSave']>[1],
     certificationIssues: CertificationIssue[]
   ) => {
-    setLanes(prev => prev.map(l => (l.id === laneId ? { ...l, ...updates } : l)));
-
     const targetLane = lanes.find(l => l.id === laneId);
     const laneCode = targetLane?.laneCode || updates.originIata + '-' + updates.destinationIata;
+    const previousLevel = targetLane ? getEffectiveRiskLevel(targetLane) : 'Low';
+
+    const risk = await recomputeLaneRisk({
+      originIata: updates.originIata,
+      originCoords: updates.originCoords,
+      destinationIata: updates.destinationIata,
+      destinationCoords: updates.destinationCoords,
+      stops: updates.stops,
+      mode: updates.mode,
+      tempRangeType: updates.tempRangeType,
+      tempMin: updates.tempMin,
+      tempMax: updates.tempMax,
+      dataSource,
+    });
+
+    setLanes(prev => prev.map(l => (l.id === laneId ? { ...l, ...updates, ...risk } : l)));
+    setRiskResolutionToast(resolutionMessage(previousLevel, risk, updates.carrier));
 
     appendAuditLog(
       laneCode,
       'Lane Rerouted / Updated',
       'LANE_CONFIGURATION',
-      `Route updated to ${updates.originIata} → ${updates.stops.map(s => s.iata).join(' → ')}${updates.stops.length ? ' → ' : ''}${updates.destinationIata} via ${updates.mode} (${updates.carrier}).`
+      `Route updated to ${updates.originIata} → ${updates.stops.map(s => s.iata).join(' → ')}${updates.stops.length ? ' → ' : ''}${updates.destinationIata} via ${updates.mode} (${updates.carrier}). Risk re-assessed at ${risk.riskScore}% (${risk.riskLevel}).`
     );
 
     // Fire-and-forget, matching every other cloud-only write in this app — a demo/local lane's
     // id doesn't exist as a transport_lanes row, so this must never be attempted outside cloud.
     if (dataSource === 'cloud') {
       updateLaneRouteInSupabase(laneId, updates).catch(() => {});
+      syncRecomputedRisk(laneId, risk, dataSource);
     }
 
     if (certificationIssues.length > 0 && targetLane) {
@@ -753,13 +809,32 @@ export default function App() {
     });
   };
 
+  // Real weather-triggered disruptions (alert_type WEATHER_HAZARD, written by the weather-sync
+  // Edge Function against real OpenWeatherMap readings) — cloud-only, same reasoning as the
+  // corridor-advisory feed below.
+  const [weatherHazardDisruptions, setWeatherHazardDisruptions] = useState<WeatherDisruption[]>([]);
+  useEffect(() => {
+    if (dataSource !== 'cloud') {
+      setWeatherHazardDisruptions([]);
+      return;
+    }
+    let cancelled = false;
+    const load = () => fetchWeatherHazardDisruptions().then((rows) => { if (!cancelled) setWeatherHazardDisruptions(rows); });
+    load();
+    const interval = setInterval(load, 5 * 60 * 1000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [dataSource]);
+
   // Real disruption feed: only shown when cloud-connected, since it's derived from live
   // corridor_advisories against live lanes — in local demo mode there's no live advisory feed
   // to check against, so it falls back to the local mock dataset (same fictional universe as
   // the local demo lanes, not mixed with real data).
   const effectiveDisruptions = useMemo(
-    () => (dataSource === 'cloud' ? deriveDisruptionsFromAdvisories(lanes, corridorAdvisories) : disruptions),
-    [dataSource, lanes, corridorAdvisories, disruptions]
+    () =>
+      dataSource === 'cloud'
+        ? [...deriveDisruptionsFromAdvisories(lanes, corridorAdvisories), ...weatherHazardDisruptions]
+        : disruptions,
+    [dataSource, lanes, corridorAdvisories, disruptions, weatherHazardDisruptions]
   );
 
   // Filter application
@@ -833,7 +908,8 @@ export default function App() {
         onTryDemo={() => setHasEnteredApp(true)}
         onSignIn={() => {
           setHasEnteredApp(true);
-          setActiveTab('LOGIN');
+          setPlanModalContext('signin');
+          setShowPlanModal(true);
         }}
       />
     );
@@ -905,6 +981,21 @@ export default function App() {
           isAuthenticated={isAuthenticated}
           onRequireAdvancedAuth={() => requestAdvancedAccess('ADVANCED_MODE')}
         />
+
+        {/* Risk resolution toast — the one confirmation surface left after a carrier/route edit,
+            since EditLaneModal closes itself immediately on save. Distinct styling for an actual
+            resolution vs. a plain "change applied" transfer, per Part 1's resolved/transferring
+            split. */}
+        {riskResolutionToast && (
+          <div className={`fixed top-4 right-4 z-[70] max-w-sm px-4 py-3 rounded-xl border shadow-2xl text-xs font-semibold animate-in slide-in-from-top-2 flex items-start gap-2 ${
+            riskResolutionToast.startsWith('Resolved')
+              ? lightShell ? 'bg-emerald-50 border-emerald-300 text-emerald-700' : 'bg-emerald-950/90 border-emerald-500/50 text-emerald-200'
+              : lightShell ? 'bg-teal-50 border-teal-300 text-teal-700' : 'bg-teal-950/90 border-teal-500/50 text-teal-200'
+          }`}>
+            <ShieldCheck className="w-4 h-4 flex-shrink-0 mt-0.5" />
+            <span>{riskResolutionToast}</span>
+          </div>
+        )}
 
         {/* Main Container */}
         <main className="flex-1 w-full mx-auto px-4 sm:px-6 py-5 max-w-[1600px]">
@@ -1067,6 +1158,7 @@ export default function App() {
             onTriggerSimulatedExcursion={handleTriggerSimulatedExcursion}
             isAuthenticated={isAuthenticated}
             dataSource={dataSource}
+            focusTab={settingsFocusTab}
           />
         )}
 
@@ -1090,6 +1182,7 @@ export default function App() {
           from Simple to Advanced dashboard mode. */}
       {showPlanModal && (
         <PlanSelectionModal
+          context={planModalContext}
           onClose={() => {
             setShowPlanModal(false);
             setPendingUnlockTarget(null);
@@ -1122,6 +1215,7 @@ export default function App() {
           onAddRiskFactor={handleAddRiskFactor}
           onExecuteMitigation={handleExecuteMitigation}
           onHydrateRiskFactors={handleHydrateRiskFactors}
+          onLaneRiskUpdated={handleLaneRiskUpdated}
         />
       )}
 
@@ -1232,7 +1326,18 @@ export default function App() {
         onClose={() => setIsChatAssistantOpen(false)}
         currentUser={currentUser}
         dataSource={dataSource}
+        isAuthenticated={isAuthenticated}
         onLaneCreated={handleLaneCreatedViaChat}
+        onRequireSignIn={() => {
+          setIsChatAssistantOpen(false);
+          setPlanModalContext('signin');
+          setShowPlanModal(true);
+        }}
+        onRequireApiKey={() => {
+          setIsChatAssistantOpen(false);
+          setSettingsFocusTab({ tab: 'COMPLIANCE' });
+          setActiveTab('SETTINGS');
+        }}
       />
 
       {/* Persistent Global Footer */}

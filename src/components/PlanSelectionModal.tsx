@@ -7,6 +7,10 @@ interface PlanSelectionModalProps {
   /** Fires regardless of which tier is picked — none of them charge anything. This exists to
    *  frame why you're about to hit a sign-up form, not to actually gate by tier. */
   onContinue: () => void;
+  /** 'advanced' when reached by trying to unlock Advanced mode from Simple/Demo, 'signin' when
+   *  reached directly from the landing page's "Sign in" button — same modal, different framing
+   *  for why an account is about to be asked for. */
+  context?: 'advanced' | 'signin';
 }
 
 interface PlanTier {
@@ -61,7 +65,7 @@ const ACCENT_CLASSES: Record<string, { light: string; dark: string; iconLight: s
  * (real sign-up/sign-in); this exists purely to explain what's behind the login before asking
  * for an account, not to actually gate functionality by which card gets clicked.
  */
-export const PlanSelectionModal: React.FC<PlanSelectionModalProps> = ({ onClose, onContinue }) => {
+export const PlanSelectionModal: React.FC<PlanSelectionModalProps> = ({ onClose, onContinue, context = 'advanced' }) => {
   const t = useThemeTokens();
 
   return (
@@ -70,7 +74,9 @@ export const PlanSelectionModal: React.FC<PlanSelectionModalProps> = ({ onClose,
 
         <div className={`p-5 sm:p-6 border-b ${t.border} flex items-start justify-between gap-4`}>
           <div>
-            <h2 className={`text-lg font-bold ${t.textPrimary}`}>Advanced mode needs an account</h2>
+            <h2 className={`text-lg font-bold ${t.textPrimary}`}>
+              {context === 'advanced' ? 'Advanced mode needs an account' : 'Choose how you\'ll use PharmaTrack'}
+            </h2>
             <p className={`text-xs mt-1 ${t.textMuted}`}>
               None of these charge anything — every tier is free and leads to the same sign-up. This is just to show what's
               behind the login before asking for one. Simple mode stays fully open with no account, always.

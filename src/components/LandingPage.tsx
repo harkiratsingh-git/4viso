@@ -1,5 +1,5 @@
-import React from 'react';
-import { ShieldCheck, Thermometer, ArrowRight, LogIn, PackageSearch, AlertTriangle } from 'lucide-react';
+import React, { useState } from 'react';
+import { ShieldCheck, Thermometer, ArrowRight, LogIn, PackageSearch, AlertTriangle, X, Check } from 'lucide-react';
 import { TransportLane } from '../types';
 import { isLaneHighRisk, isLaneExcursing } from '../utils/laneRisk';
 import { useThemeTokens } from '../contexts/ViewModeContext';
@@ -20,6 +20,7 @@ interface LandingPageProps {
  */
 export const LandingPage: React.FC<LandingPageProps> = ({ lanes, dataSource, onTryDemo, onSignIn }) => {
   const t = useThemeTokens();
+  const [showComparison, setShowComparison] = useState(true);
 
   const totalLanes = lanes.length;
   const avgGdpCompliance = totalLanes > 0
@@ -97,10 +98,47 @@ export const LandingPage: React.FC<LandingPageProps> = ({ lanes, dataSource, onT
               <span>Sign in</span>
             </button>
           </div>
-          <p className={`mt-3 text-[11px] ${t.textFaint}`}>
-            The demo drops you straight into Simple mode. Sign-in is only needed for the full operational console — Advanced
-            mode, per-leg carrier assignment, disruption reporting, and the audit trail.
-          </p>
+          {showComparison ? (
+            <div className={`mt-5 relative text-left rounded-xl border p-4 grid grid-cols-1 sm:grid-cols-2 gap-4 ${t.cardBg} ${t.border}`}>
+              <button
+                onClick={() => setShowComparison(false)}
+                aria-label="Dismiss"
+                className={`absolute top-2 right-2 p-1 rounded-lg ${t.chipBg} ${t.hoverBg} ${t.textFaint} ${t.light ? 'hover:text-slate-900' : 'hover:text-white'}`}
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+              <div>
+                <div className={`text-[11px] font-bold uppercase tracking-wider mb-1.5 ${t.textMuted}`}>Try Demo includes</div>
+                <ul className="space-y-1">
+                  {['Simple mode dashboard', 'Assistant, with a limited demo query budget', 'No account needed'].map((f) => (
+                    <li key={f} className={`text-xs flex items-start gap-1.5 ${t.textSecondary}`}>
+                      <Check className={`w-3 h-3 flex-shrink-0 mt-0.5 ${t.light ? 'text-emerald-600' : 'text-emerald-400'}`} />
+                      <span>{f}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              <div>
+                <div className={`text-[11px] font-bold uppercase tracking-wider mb-1.5 ${t.textMuted}`}>Signing in unlocks</div>
+                <ul className="space-y-1">
+                  {['Unlimited assistant usage', 'Full carrier/route recommendation engine', 'Phase 4 mid-transit disruption management', 'Advanced mode, audit trail, compliance reporting'].map((f) => (
+                    <li key={f} className={`text-xs flex items-start gap-1.5 ${t.textSecondary}`}>
+                      <Check className={`w-3 h-3 flex-shrink-0 mt-0.5 ${t.light ? 'text-teal-600' : 'text-teal-400'}`} />
+                      <span>{f}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              <p className={`sm:col-span-2 text-[10px] ${t.textFaint}`}>
+                This is informational only — "Try the demo" always works with no account, right now.
+              </p>
+            </div>
+          ) : (
+            <p className={`mt-3 text-[11px] ${t.textFaint}`}>
+              The demo drops you straight into Simple mode. Sign-in is only needed for the full operational console — Advanced
+              mode, per-leg carrier assignment, disruption reporting, and the audit trail.
+            </p>
+          )}
         </div>
       </main>
 

@@ -12,10 +12,17 @@ import {
 import { computeLegRecommendations, LegMode, LegRecommendation } from '../utils/legRecommendation';
 import { LegCarrierBreakdown } from './LegCarrierBreakdown';
 import { useThemeTokens } from '../contexts/ViewModeContext';
+import { recomputeLaneRiskFromLegScores, resolutionMessage, RecomputedLaneRisk } from '../utils/laneRiskRecompute';
+import { getEffectiveRiskLevel } from '../utils/laneRisk';
 
 interface LaneCarrierAssignmentPanelProps {
   lane: TransportLane;
   dataSource: 'loading' | 'cloud' | 'local';
+  /** Part 1: called after Save with the lane's real recomputed composite risk (averaged across
+   *  the just-saved legs, reflecting any per-leg mode override, not just the carrier swap) so the
+   *  parent can update the lane's stored risk_score/risk_level/gdp_status the same way every
+   *  other carrier/route-changing path does. */
+  onRiskUpdated: (laneId: string, risk: RecomputedLaneRisk) => void;
 }
 
 /**
@@ -31,7 +38,7 @@ interface LaneCarrierAssignmentPanelProps {
  * can't seed from or persist to a lane_legs row that doesn't exist — "Save" confirms the
  * selection for the current session instead.
  */
-export const LaneCarrierAssignmentPanel: React.FC<LaneCarrierAssignmentPanelProps> = ({ lane, dataSource }) => {
+export const LaneCarrierAssignmentPanel: React.FC<LaneCarrierAssignmentPanelProps> = ({ lane, dataSource, onRiskUpdated }) => {
   const t = useThemeTokens();
   const [carriers, setCarriers] = useState<Carrier[]>([]);
   const [performanceByCarrierId, setPerformanceByCarrierId] = useState<Map<string, CarrierPerformanceSummary>>(new Map());
@@ -93,12 +100,44 @@ export const LaneCarrierAssignmentPanel: React.FC<LaneCarrierAssignmentPanelProp
     setSaving(true);
     setSaveMessage(null);
 
+    const previousLevel = getEffectiveRiskLevel(lane);
+    const anyModeChanged = legs.some((l) => (assignedMode[l.legSequence] ?? l.mode) !== l.mode);
+    // A leg's stored riskScore was computed with its *original* mode — if the user changed a
+    // leg's mode here, that score is stale and must be recomputed against the mode actually
+    // being saved (Part 1: any leg/route change re-runs the real risk calculation, not just
+    // carrier swaps, which don't move calculate_lane_base_risk's origin/destination/mode inputs).
+    const freshLegs = anyModeChanged
+      ? await computeLegRecommendations(
+          [
+            { iata: lane.originIata, city: lane.originCity, country: lane.originCountry, coords: lane.originCoords },
+            ...lane.stops.map((s) => ({ iata: s.iata, city: s.city, country: s.country, coords: s.coords })),
+            { iata: lane.destinationIata, city: lane.destinationCity, country: lane.destinationCountry, coords: lane.destinationCoords },
+          ],
+          lane.mode,
+          lane.tempRangeType,
+          carriers,
+          performanceByCarrierId,
+          assignedMode
+        )
+      : legs;
+    const legRiskById = new Map(freshLegs.map((l) => [l.legSequence, l.riskScore]));
+
+    const carrierName = (id: string | null) => (id ? carriers.find((c) => c.id === id)?.name : null) ?? 'the selected carrier';
+    const unifiedCarrierId = legs.length > 0 ? assignedCarrierId[legs[0].legSequence] ?? legs[0].topCarrierPick?.carrier.id ?? null : null;
+    const allSameCarrier = legs.every((l) => (assignedCarrierId[l.legSequence] ?? l.topCarrierPick?.carrier.id ?? null) === unifiedCarrierId);
+    const actorLabel = allSameCarrier ? carrierName(unifiedCarrierId) : 'the updated per-leg assignment';
+
+    const recomputed = recomputeLaneRiskFromLegScores(
+      legs.map((l) => legRiskById.get(l.legSequence) ?? l.riskScore).filter((s): s is number => s != null)
+    );
+    onRiskUpdated(lane.id, recomputed);
+
     if (dataSource !== 'cloud') {
       // No real lane_legs row exists to persist to for a demo lane — the selection is already
       // reflected live in the dropdowns above, so this just confirms it for the session.
       setTimeout(() => {
         setSaving(false);
-        setSaveMessage('Carrier assignment updated for this session (Local Simulation — not saved to a database).');
+        setSaveMessage(`${resolutionMessage(previousLevel, recomputed, actorLabel)} (Local Simulation — not saved to a database.)`);
       }, 300);
       return;
     }
@@ -115,11 +154,11 @@ export const LaneCarrierAssignmentPanel: React.FC<LaneCarrierAssignmentPanelProp
       distanceKm: null,
       estTransitHours: null,
       customsDelayHours: null,
-      legRiskScore: l.riskScore,
+      legRiskScore: legRiskById.get(l.legSequence) ?? l.riskScore,
     }));
     const success = await replaceLaneLegs(lane.id, rows);
     setSaving(false);
-    setSaveMessage(success ? 'Carrier assignment saved.' : 'Failed to save — check your connection and try again.');
+    setSaveMessage(success ? resolutionMessage(previousLevel, recomputed, actorLabel) : 'Failed to save — check your connection and try again.');
   };
 
   if (!legs) {
@@ -161,7 +200,17 @@ export const LaneCarrierAssignmentPanel: React.FC<LaneCarrierAssignmentPanelProp
         onAnyLegBlocked={setAnyLegBlocked}
       />
 
-      {saveMessage && <p className={`text-[11px] mt-2 ${t.textMuted}`}>{saveMessage}</p>}
+      {saveMessage && (
+        <p className={`text-[11px] mt-2 px-2.5 py-1.5 rounded-lg border ${
+          saveMessage.startsWith('Resolved')
+            ? t.light ? 'bg-emerald-50 border-emerald-300 text-emerald-700' : 'bg-emerald-950/30 border-emerald-800/50 text-emerald-300'
+            : saveMessage.startsWith('Transferring')
+              ? t.light ? 'bg-teal-50 border-teal-300 text-teal-700' : 'bg-teal-950/30 border-teal-800/50 text-teal-300'
+              : `border-transparent ${t.textMuted}`
+        }`}>
+          {saveMessage}
+        </p>
+      )}
     </div>
   );
 };

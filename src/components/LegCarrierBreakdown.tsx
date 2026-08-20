@@ -173,6 +173,21 @@ export const LegCarrierBreakdown: React.FC<LegCarrierBreakdownProps> = ({
               </div>
             )}
 
+            {/* Part 2: the second-ranked carrier as a real one-click backup, not just a name in
+                the dropdown the user has to notice and pick manually. Hidden once it's already
+                the selection. */}
+            {leg.carrierRecommendations[1] && carrierId !== leg.carrierRecommendations[1].carrier.id && (
+              <button
+                type="button"
+                onClick={() => onCarrierChange(leg.legSequence, leg.carrierRecommendations[1].carrier.id)}
+                className={`text-[10px] font-semibold px-2 py-1 rounded-lg border transition-all ${
+                  t.light ? 'bg-white hover:bg-slate-100 text-slate-600 border-slate-300' : 'bg-slate-900/50 hover:bg-slate-800 text-slate-400 border-slate-700'
+                }`}
+              >
+                Use backup carrier: {leg.carrierRecommendations[1].carrier.name} (match {leg.carrierRecommendations[1].score}/100)
+              </button>
+            )}
+
             {carrierId && status && (
               <CertificationGate
                 carrierId={carrierId}
