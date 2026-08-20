@@ -36,15 +36,16 @@ const MAX_TOOL_ROUNDS = 6;
 const SESSION_DAILY_CAP = Number(Deno.env.get('GEMINI_SESSION_DAILY_CAP')) || 25;
 
 // Global daily cap — protects the actual Gemini free-tier requests-per-day quota shared across
-// EVERY anonymous demo visitor. THIS IS A PLACEHOLDER, not a researched number: as of this
-// deploy, nobody has confirmed the live RPD/RPM/TPM figures shown on the actual Google AI
-// Studio project dashboard for the key in use (these have changed more than once through 2026,
-// so a number from documentation or a blog post can't be trusted either). 200 was picked only
-// to be conservatively low — safely under any plausible free-tier RPD for a Flash-Lite-class
-// model with headroom for the rest of the day. Replace this via
-// `supabase secrets set GEMINI_GLOBAL_DAILY_CAP=<real RPD, minus a safety margin>` once the
-// dashboard numbers are confirmed, rather than trusting this default in production.
-const GLOBAL_DAILY_CAP = Number(Deno.env.get('GEMINI_GLOBAL_DAILY_CAP')) || 200;
+// EVERY anonymous demo visitor. Set from the real numbers on this key's Google AI Studio
+// dashboard: Gemini 1.5 Flash shows 1,500 RPD (15 RPM, 1M TPM); 1.5 Pro shows only 50 RPD (2 RPM,
+// 32K TPM). The dashboard doesn't list gemini-3.5-flash-lite (the model actually deployed here —
+// see MODEL above) separately, so 1,500 is used as the safe daily budget regardless of the exact
+// model string, per the account owner's call. Note the 15 RPM figure isn't enforced anywhere in
+// this function (only the daily totals are) — a burst of concurrent demo visitors could still hit
+// a 429 mid-day even under the daily cap; add per-minute throttling if that becomes a real
+// problem. Override via `supabase secrets set GEMINI_GLOBAL_DAILY_CAP=...` if the dashboard
+// numbers change again.
+const GLOBAL_DAILY_CAP = Number(Deno.env.get('GEMINI_GLOBAL_DAILY_CAP')) || 1500;
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
